@@ -61,6 +61,12 @@ export default function NewAlineaPage() {
   const [streaming, setStreaming] = useState(false)
   const [draft, setDraft] = useState<AlineaDraft | null>(null)
   const chatEndRef = useRef<HTMLDivElement>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  function autoResize(el: HTMLTextAreaElement) {
+    el.style.height = 'auto'
+    el.style.height = el.scrollHeight + 'px'
+  }
 
   const [title, setTitle] = useState('')
   const [content, setContent] = useState('')
@@ -152,6 +158,7 @@ export default function NewAlineaPage() {
     const newHistory = [...messages, newMessage]
     setMessages(newHistory)
     setUserInput('')
+    if (textareaRef.current) textareaRef.current.style.height = 'auto'
     await sendToAI(newHistory)
   }
 
@@ -262,15 +269,20 @@ export default function NewAlineaPage() {
             <div className="flex gap-2">
               <div className="flex-1 flex items-end gap-2 bg-surface border border-border rounded-2xl px-4 py-3 focus-within:border-accent/50 transition-colors">
                 <textarea
+                  ref={textareaRef}
                   value={userInput}
-                  onChange={(e) => setUserInput(e.target.value)}
+                  onChange={(e) => { setUserInput(e.target.value); autoResize(e.target) }}
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleUserSend() }
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault()
+                      handleUserSend()
+                      if (textareaRef.current) { textareaRef.current.style.height = 'auto' }
+                    }
                   }}
                   placeholder={transcribing ? 'Transcription en cours…' : 'Réponds ici…'}
-                  rows={1}
+                  rows={3}
                   disabled={streaming || transcribing}
-                  className="flex-1 text-sm text-ink placeholder:text-muted/50 resize-none focus:outline-none bg-transparent"
+                  className="flex-1 text-sm text-ink placeholder:text-muted/50 resize-none focus:outline-none bg-transparent overflow-hidden"
                 />
                 <VoiceButton recording={recording} transcribing={transcribing} onStart={startRecording} onStop={stopRecording} />
               </div>
