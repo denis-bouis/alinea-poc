@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/client'
 import type { EmotionTag, ThematicCategory, VisibilityLevel } from '@/types/database'
 import type Anthropic from '@anthropic-ai/sdk'
 import { parseFrenchDate } from '@/lib/parse-date'
+import type { ConversationMessage } from '@/types/database'
 
 type Message = { role: 'user' | 'assistant'; content: string }
 type AlineaDraft = {
@@ -62,6 +63,7 @@ export default function EditAlineaPage() {
   const [streaming, setStreaming] = useState(false)
   const [draft, setDraft] = useState<AlineaDraft | null>(null)
   const [existingContent, setExistingContent] = useState('')
+  const [conversationHistory, setConversationHistory] = useState<ConversationMessage[] | null>(null)
   const chatEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -99,6 +101,7 @@ export default function EditAlineaPage() {
       setTitle(data.title ?? '')
       setContent(data.content ?? '')
       setExistingContent(data.content ?? '')
+      setConversationHistory(data.conversation_history ?? null)
       setApproximateDate(data.approximate_date ?? '')
       setEventYear(data.event_year ?? '')
       setEventMonth(data.event_month ?? '')
@@ -138,6 +141,7 @@ export default function EditAlineaPage() {
       body: JSON.stringify({
         messages: messagesForAPI,
         existingContent: currentExistingContent ?? existingContent,
+        conversationHistory,
       }),
     })
 

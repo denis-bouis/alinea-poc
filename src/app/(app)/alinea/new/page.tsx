@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/client'
 import type { EmotionTag, ThematicCategory, VisibilityLevel } from '@/types/database'
 import type Anthropic from '@anthropic-ai/sdk'
 import { parseFrenchDate } from '@/lib/parse-date'
+import type { ConversationMessage } from '@/types/database'
 
 type Mode = 'guided' | 'free'
 type Message = { role: 'user' | 'assistant'; content: string }
@@ -212,6 +213,9 @@ export default function NewAlineaPage() {
       event_year:  eventYear  !== '' ? eventYear  : null,
       event_month: eventMonth !== '' ? eventMonth : null,
       event_day:   eventDay   !== '' ? eventDay   : null,
+      conversation_history: mode === 'guided' && messages.length > 0
+        ? (messages as ConversationMessage[])
+        : null,
     })
     if (!error) router.push('/timeline')
     setSaving(false)

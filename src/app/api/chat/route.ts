@@ -36,11 +36,28 @@ ${BASE_RULES}
 
 ${DRAFT_SIGNAL}`
 
-function buildEditSystemPrompt(existingContent: string): string {
-  return `Tu es Alinéa, un accompagnateur bienveillant qui aide les utilisateurs à enrichir et retravaille leurs souvenirs.
+type ConversationMessage = { role: string; content: string }
+
+function buildEditSystemPrompt(existingContent: string, conversationHistory?: ConversationMessage[]): string {
+  let memorySection = ''
+  if (conversationHistory && conversationHistory.length > 0) {
+    const formatted = conversationHistory
+      .map((m) => `[${m.role === 'user' ? 'Utilisateur' : 'Alinéa'}] : ${m.content}`)
+      .join('\n\n')
+    memorySection = `
+## Mémoire de la conversation originale
+
+Lors de la création de ce récit, l'utilisateur a partagé de nombreux détails. Certains ne figurent pas dans le récit final mais peuvent enrichir la révision :
+
+${formatted}
+
+`
+  }
+
+  return `Tu es Alinéa, un accompagnateur bienveillant qui aide les utilisateurs à enrichir et retravailler leurs souvenirs.
 
 ${BASE_RULES}
-
+${memorySection}
 ## Mode révision
 
 L'utilisateur souhaite retravailler ce récit qu'il a déjà rédigé :
@@ -49,19 +66,20 @@ L'utilisateur souhaite retravailler ce récit qu'il a déjà rédigé :
 ${existingContent}
 ---
 
-Commence par lui demander ce qu'il voudrait améliorer ou approfondir : un détail sensoriel, une émotion, une personne, un contexte... Pose une seule question à la fois. Quand tu as suffisamment de matière, propose une version révisée.
+Appuie-toi sur la mémoire de la conversation originale si elle est disponible. Commence par lui demander ce qu'il voudrait améliorer ou approfondir : un détail sensoriel, une émotion, une personne, un contexte... Pose une seule question à la fois. Quand tu as suffisamment de matière, propose une version révisée.
 
 ${DRAFT_SIGNAL}`
 }
 
 export async function POST(request: NextRequest) {
-  const { messages, existingContent } = await request.json() as {
+  const { messages, existingContent, conversationHistory } = await request.json() as {
     messages: Anthropic.MessageParam[]
     existingContent?: string
+    conversationHistory?: ConversationMessage[]
   }
 
   const systemPrompt = existingContent
-    ? buildEditSystemPrompt(existingContent)
+    ? buildEditSystemPrompt(existingContent, conversationHistory)
     : NEW_SYSTEM_PROMPT
 
   const stream = await client.messages.stream({

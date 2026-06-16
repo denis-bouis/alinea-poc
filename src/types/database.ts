@@ -20,6 +20,8 @@ type ProfileRow = {
   created_at: string
 }
 
+export type ConversationMessage = { role: 'user' | 'assistant'; content: string }
+
 type AlineaRow = {
   id: string
   user_id: string
@@ -35,6 +37,7 @@ type AlineaRow = {
   event_month: number | null
   event_day: number | null
   location: string | null
+  conversation_history: ConversationMessage[] | null
   created_at: string
   updated_at: string
 }
