@@ -1,3 +1,4 @@
+import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 
 const MONTHS_FR = ['jan.', 'fév.', 'mars', 'avr.', 'mai', 'juin',
@@ -62,11 +63,19 @@ export default async function TimelinePage() {
                     </p>
                   )}
                 </div>
-                <span className="text-xs text-muted shrink-0 pt-0.5">
-                  {formatEventDate(a.event_year, a.event_month, a.event_day)
-                    ?? a.approximate_date
-                    ?? new Date(a.created_at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}
-                </span>
+                <div className="flex flex-col items-end gap-2 shrink-0">
+                  <span className="text-xs text-muted">
+                    {formatEventDate(a.event_year, a.event_month, a.event_day)
+                      ?? a.approximate_date
+                      ?? new Date(a.created_at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}
+                  </span>
+                  <Link
+                    href={`/alinea/${a.id}/edit`}
+                    className="text-xs text-muted hover:text-accent transition-colors"
+                  >
+                    Modifier
+                  </Link>
+                </div>
               </div>
 
               {(a.emotion || a.category) && (

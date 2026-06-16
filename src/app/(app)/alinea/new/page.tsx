@@ -265,8 +265,7 @@ export default function NewAlineaPage() {
             </div>
           )}
 
-          {!draft && (
-            <div className="flex gap-2">
+          <div className="flex gap-2">
               <div className="flex-1 flex items-end gap-2 bg-surface border border-border rounded-2xl px-4 py-3 focus-within:border-accent/50 transition-colors">
                 <textarea
                   ref={textareaRef}
@@ -279,7 +278,7 @@ export default function NewAlineaPage() {
                       if (textareaRef.current) { textareaRef.current.style.height = 'auto' }
                     }
                   }}
-                  placeholder={transcribing ? 'Transcription en cours…' : 'Réponds ici…'}
+                  placeholder={transcribing ? 'Transcription en cours…' : draft ? 'Tu veux ajuster quelque chose ?' : 'Réponds ici…'}
                   rows={3}
                   disabled={streaming || transcribing}
                   className="flex-1 text-sm text-ink placeholder:text-muted/50 resize-none focus:outline-none bg-transparent overflow-hidden"
@@ -294,7 +293,6 @@ export default function NewAlineaPage() {
                 →
               </button>
             </div>
-          )}
         </div>
       )}
 
