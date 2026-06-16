@@ -6,7 +6,6 @@ import { createClient } from '@/lib/supabase/client'
 import type { EmotionTag, ThematicCategory, VisibilityLevel } from '@/types/database'
 import type Anthropic from '@anthropic-ai/sdk'
 import { parseFrenchDate } from '@/lib/parse-date'
-import type { ConversationMessage } from '@/types/database'
 
 type Mode = 'guided' | 'free'
 type Message = { role: 'user' | 'assistant'; content: string }
@@ -62,6 +61,7 @@ export default function NewAlineaPage() {
   const [userInput, setUserInput] = useState('')
   const [streaming, setStreaming] = useState(false)
   const [draft, setDraft] = useState<AlineaDraft | null>(null)
+  const [aiMemory, setAiMemory] = useState<string | null>(null)
   const chatEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -148,9 +148,25 @@ export default function NewAlineaPage() {
         updated[updated.length - 1] = { role: 'assistant', content: stripDraftBlock(accumulated) }
         return updated
       })
+      // Synthèse en arrière-plan : toute la conversation + dernier message IA (sans le bloc draft)
+      const fullHistory = [
+        ...history,
+        { role: 'assistant' as const, content: stripDraftBlock(accumulated) },
+      ]
+      generateSynthesis(fullHistory)
     }
 
     setStreaming(false)
+  }
+
+  async function generateSynthesis(history: Message[]) {
+    const res = await fetch('/api/synthesize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: history }),
+    })
+    const { synthesis } = await res.json() as { synthesis: string }
+    if (synthesis) setAiMemory(synthesis)
   }
 
   async function handleUserSend() {
@@ -213,9 +229,7 @@ export default function NewAlineaPage() {
       event_year:  eventYear  !== '' ? eventYear  : null,
       event_month: eventMonth !== '' ? eventMonth : null,
       event_day:   eventDay   !== '' ? eventDay   : null,
-      conversation_history: mode === 'guided' && messages.length > 0
-        ? (messages as ConversationMessage[])
-        : null,
+      ai_memory: mode === 'guided' ? (aiMemory ?? null) : null,
     })
     if (!error) router.push('/timeline')
     setSaving(false)

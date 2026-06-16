@@ -36,23 +36,15 @@ ${BASE_RULES}
 
 ${DRAFT_SIGNAL}`
 
-type ConversationMessage = { role: string; content: string }
-
-function buildEditSystemPrompt(existingContent: string, conversationHistory?: ConversationMessage[]): string {
-  let memorySection = ''
-  if (conversationHistory && conversationHistory.length > 0) {
-    const formatted = conversationHistory
-      .map((m) => `[${m.role === 'user' ? 'Utilisateur' : 'Alinéa'}] : ${m.content}`)
-      .join('\n\n')
-    memorySection = `
+function buildEditSystemPrompt(existingContent: string, aiMemory?: string): string {
+  const memorySection = aiMemory ? `
 ## Mémoire de la conversation originale
 
-Lors de la création de ce récit, l'utilisateur a partagé de nombreux détails. Certains ne figurent pas dans le récit final mais peuvent enrichir la révision :
+Lors de la création de ce récit, l'utilisateur a partagé des informations qui ne figurent pas toutes dans le récit final. Tu peux t'en servir pour enrichir la révision :
 
-${formatted}
+${aiMemory}
 
-`
-  }
+` : ''
 
   return `Tu es Alinéa, un accompagnateur bienveillant qui aide les utilisateurs à enrichir et retravailler leurs souvenirs.
 
@@ -72,14 +64,14 @@ ${DRAFT_SIGNAL}`
 }
 
 export async function POST(request: NextRequest) {
-  const { messages, existingContent, conversationHistory } = await request.json() as {
+  const { messages, existingContent, aiMemory } = await request.json() as {
     messages: Anthropic.MessageParam[]
     existingContent?: string
-    conversationHistory?: ConversationMessage[]
+    aiMemory?: string
   }
 
   const systemPrompt = existingContent
-    ? buildEditSystemPrompt(existingContent, conversationHistory)
+    ? buildEditSystemPrompt(existingContent, aiMemory)
     : NEW_SYSTEM_PROMPT
 
   const stream = await client.messages.stream({
