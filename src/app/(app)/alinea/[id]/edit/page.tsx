@@ -5,6 +5,7 @@ import { useRouter, useParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import type { EmotionTag, ThematicCategory, VisibilityLevel } from '@/types/database'
 import type Anthropic from '@anthropic-ai/sdk'
+import { parseFrenchDate } from '@/lib/parse-date'
 
 type Message = { role: 'user' | 'assistant'; content: string }
 type AlineaDraft = {
@@ -167,8 +168,10 @@ export default function EditAlineaPage() {
       setEmotion(extractedDraft.emotion ?? '')
       setCategory(extractedDraft.category ?? '')
       setApproximateDate(extractedDraft.approximate_date ?? '')
-      const yearMatch = extractedDraft.approximate_date?.match(/\b(1[0-9]{3}|20[0-9]{2})\b/)
-      if (yearMatch) setEventYear(parseInt(yearMatch[1]))
+      const { year, month, day } = parseFrenchDate(extractedDraft.approximate_date)
+      setEventYear(year ?? '')
+      setEventMonth(month ?? '')
+      setEventDay(day ?? '')
       setMessages((prev) => {
         const updated = [...prev]
         updated[updated.length - 1] = { role: 'assistant', content: stripDraftBlock(accumulated) }
