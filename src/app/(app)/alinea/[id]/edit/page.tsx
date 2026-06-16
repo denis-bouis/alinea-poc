@@ -180,9 +180,24 @@ export default function EditAlineaPage() {
         updated[updated.length - 1] = { role: 'assistant', content: stripDraftBlock(accumulated) }
         return updated
       })
+      const fullHistory = [
+        ...history,
+        { role: 'assistant' as const, content: stripDraftBlock(accumulated) },
+      ]
+      generateSynthesis(fullHistory)
     }
 
     setStreaming(false)
+  }
+
+  async function generateSynthesis(history: Message[]) {
+    const res = await fetch('/api/synthesize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: history }),
+    })
+    const { synthesis } = await res.json() as { synthesis: string }
+    if (synthesis) setAiMemory(synthesis)
   }
 
   async function handleUserSend() {
@@ -238,6 +253,7 @@ export default function EditAlineaPage() {
       event_year: eventYear !== '' ? eventYear : null,
       event_month: eventMonth !== '' ? eventMonth : null,
       event_day: eventDay !== '' ? eventDay : null,
+      ai_memory: aiMemory ?? null,
     }).eq('id', id)
     if (!error) router.push('/timeline')
     setSaving(false)
