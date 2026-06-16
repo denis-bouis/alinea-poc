@@ -1,7 +1,9 @@
 'use client'
 
 import { useState } from 'react'
+import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { createClient } from '@/lib/supabase/client'
 
 const MONTHS_FR = ['jan.', 'fév.', 'mars', 'avr.', 'mai', 'juin',
   'juil.', 'août', 'sep.', 'oct.', 'nov.', 'déc.']
@@ -39,8 +41,17 @@ type Alinea = {
 }
 
 export function AlineaCard({ a }: { a: Alinea }) {
+  const router = useRouter()
+  const supabase = createClient()
   const [preview, setPreview] = useState(false)
   const [memoryOpen, setMemoryOpen] = useState(false)
+  const [deleteState, setDeleteState] = useState<'idle' | 'confirm' | 'loading'>('idle')
+
+  async function handleDelete() {
+    setDeleteState('loading')
+    await supabase.from('alineas').delete().eq('id', a.id)
+    router.refresh()
+  }
 
   const dateLabel = formatEventDate(a.event_year, a.event_month, a.event_day)
     ?? a.approximate_date
@@ -66,29 +77,57 @@ export function AlineaCard({ a }: { a: Alinea }) {
           <div className="flex flex-col items-end gap-3 shrink-0">
             <span className="text-xs text-muted">{dateLabel}</span>
             <div className="flex items-center gap-2">
-              {a.ai_memory && (
-                <button
-                  onClick={() => setMemoryOpen(true)}
-                  title="Mémoire IA (debug)"
-                  className="p-1.5 rounded-full text-muted hover:text-green hover:bg-green-bg transition-colors"
-                >
-                  <IconBrain />
-                </button>
+              {deleteState === 'confirm' ? (
+                <>
+                  <span className="text-xs text-ink/60">Supprimer ?</span>
+                  <button
+                    onClick={handleDelete}
+                    className="text-xs font-semibold text-red-500 hover:text-red-600 transition-colors px-1"
+                  >
+                    Oui
+                  </button>
+                  <button
+                    onClick={() => setDeleteState('idle')}
+                    className="text-xs text-muted hover:text-ink transition-colors px-1"
+                  >
+                    Non
+                  </button>
+                </>
+              ) : (
+                <>
+                  {a.ai_memory && (
+                    <button
+                      onClick={() => setMemoryOpen(true)}
+                      title="Mémoire IA (debug)"
+                      className="p-1.5 rounded-full text-muted hover:text-green hover:bg-green-bg transition-colors"
+                    >
+                      <IconBrain />
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setPreview(true)}
+                    title="Lire le récit complet"
+                    className="p-1.5 rounded-full text-muted hover:text-accent hover:bg-surface2 transition-colors"
+                  >
+                    <IconEye />
+                  </button>
+                  <Link
+                    href={`/alinea/${a.id}/edit`}
+                    title="Modifier"
+                    className="p-1.5 rounded-full text-muted hover:text-accent hover:bg-surface2 transition-colors"
+                  >
+                    <IconPen />
+                  </Link>
+                  <button
+                    onClick={() => setDeleteState('confirm')}
+                    title="Supprimer"
+                    disabled={deleteState === 'loading'}
+                    className="p-1.5 rounded-full text-muted hover:text-red-500 hover:bg-red-50 transition-colors disabled:opacity-40"
+                  >
+                    <IconTrash />
+                  </button>
+                </>
               )}
-              <button
-                onClick={() => setPreview(true)}
-                title="Lire le récit complet"
-                className="p-1.5 rounded-full text-muted hover:text-accent hover:bg-surface2 transition-colors"
-              >
-                <IconEye />
-              </button>
-              <Link
-                href={`/alinea/${a.id}/edit`}
-                title="Modifier"
-                className="p-1.5 rounded-full text-muted hover:text-accent hover:bg-surface2 transition-colors"
-              >
-                <IconPen />
-              </Link>
             </div>
           </div>
         </div>
@@ -208,6 +247,14 @@ function IconBrain() {
       <path d="M19.938 10.5a4 4 0 0 1 .585.396"/>
       <path d="M6 18a4 4 0 0 1-1.967-.516"/>
       <path d="M19.967 17.484A4 4 0 0 1 18 18"/>
+    </svg>
+  )
+}
+
+function IconTrash() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/>
     </svg>
   )
 }
