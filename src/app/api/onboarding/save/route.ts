@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import Anthropic from '@anthropic-ai/sdk'
 import { createClient } from '@/lib/supabase/server'
 import { nextThemeColor } from '@/types/domain'
 
@@ -133,6 +134,41 @@ export async function POST(req: NextRequest) {
           })
         }
       }
+    }
+
+    // 7. Portrait narratif — généré par l'IA à partir des données collectées
+    try {
+      const anthropic = new Anthropic()
+      const peopleDesc = payload.people.map(p => `${p.name} (${p.relation})`).join(', ')
+      const eventsDesc = [...payload.events]
+        .sort((a, b) => a.year - b.year)
+        .map(e => `${e.year} — ${e.title}`)
+        .join('; ')
+
+      const msg = await anthropic.messages.create({
+        model:      'claude-haiku-4-5',
+        max_tokens: 350,
+        messages: [{
+          role:    'user',
+          content: `Tu es le compagnon de mémoire Alinéa. Génère un portrait narratif court (2-3 phrases) décrivant qui est cette personne. Ton chaleureux, synthétique, à la troisième personne. Pas de liste — uniquement du texte fluide.
+
+Données :
+- Prénom : ${payload.displayName || 'non renseigné'}
+- Né(e) en : ${payload.birthYear}
+- Proches : ${peopleDesc || 'non renseignés'}
+- Moments clés : ${eventsDesc || 'non renseignés'}`,
+        }],
+      })
+
+      const portrait = msg.content[0]?.type === 'text' ? msg.content[0].text.trim() : null
+      if (portrait) {
+        await supabase.from('user_memory').upsert(
+          { user_id: userId, birth_year: payload.birthYear, portrait },
+          { onConflict: 'user_id' }
+        )
+      }
+    } catch (portraitErr) {
+      console.error('[onboarding/save] portrait generation failed (non-blocking):', portraitErr)
     }
 
     return NextResponse.json({ ok: true })

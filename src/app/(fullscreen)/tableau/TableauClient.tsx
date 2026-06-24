@@ -9,6 +9,7 @@ import MobileNav from '@/components/MobileNav'
 import MemoryPanel from '@/components/MemoryPanel'
 import EventDrawer from '@/components/EventDrawer'
 import ThemeDetail from '@/components/ThemeDetail'
+import PersonPanel from '@/components/PersonPanel'
 import ChatPanel, { type ChatContext } from '@/components/ChatPanel'
 import type { Theme, LifeEvent, Person, PersonRelation, UserMemory } from '@/types/domain'
 
@@ -37,6 +38,7 @@ export default function TableauClient({ userName, themes, events, people, relati
   const [showMemory,     setShowMemory]      = useState(false)
   const [selectedEvent,  setSelectedEvent]   = useState<LifeEvent | null>(null)
   const [selectedTheme,  setSelectedTheme]   = useState<Theme | null>(null)
+  const [selectedPerson, setSelectedPerson]  = useState<Person | null>(null)
   const [chatContext,    setChatContext]      = useState<ChatContext | null>(null)
   const [chatContextKey, setChatContextKey]  = useState('free-0')
   const [lastAiMessage,  setLastAiMessage]   = useState('')
@@ -209,6 +211,8 @@ export default function TableauClient({ userName, themes, events, people, relati
                 people={people}
                 relations={relations}
                 userName={userName}
+                onPersonClick={p => setSelectedPerson(p)}
+                onUserClick={() => setShowMemory(true)}
               />
             </div>
           </div>
@@ -246,7 +250,6 @@ export default function TableauClient({ userName, themes, events, people, relati
         <MemoryPanel
           portrait={portrait}
           themes={themes}
-          people={people}
           userName={userName}
           onClose={() => setShowMemory(false)}
         />
@@ -258,6 +261,15 @@ export default function TableauClient({ userName, themes, events, people, relati
           themes={themes}
           onClose={() => setSelectedEvent(null)}
           onStartChat={() => startChatWithEvent(selectedEvent)}
+        />
+      )}
+
+      {selectedPerson && (
+        <PersonPanel
+          person={selectedPerson}
+          allPeople={people}
+          onClose={() => setSelectedPerson(null)}
+          onSaved={() => { setSelectedPerson(null); router.refresh() }}
         />
       )}
 

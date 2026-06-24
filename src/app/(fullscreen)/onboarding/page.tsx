@@ -4,7 +4,9 @@ import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import dynamic from 'next/dynamic'
 import MobileNav from '@/components/MobileNav'
-import type { Theme, LifeEvent, Person, PersonRelation } from '@/types/domain'
+import PersonPanel from '@/components/PersonPanel'
+import MemoryPanel from '@/components/MemoryPanel'
+import type { Theme, LifeEvent, Person, PersonRelation, UserMemory } from '@/types/domain'
 import { nextThemeColor } from '@/types/domain'
 
 const RelationsGraph = dynamic(() => import('@/components/RelationsGraph'), { ssr: false })
@@ -101,6 +103,25 @@ function stripBlocks(text: string): string {
     .trim()
 }
 
+function extractMentionedEntities(buffer: string): {
+  peopleNames: string[]
+  placeNames:  string[]
+  hasProfile:  boolean
+} {
+  const peopleNames: string[] = []
+  const placeNames:  string[] = []
+  let hasProfile = false
+  for (const match of buffer.matchAll(EXTRACT_RE)) {
+    try {
+      const d = JSON.parse(match[1])
+      if (d.type === 'person'    && d.name) peopleNames.push(d.name as string)
+      if (d.type === 'key_place' && d.name) placeNames.push(d.name as string)
+      if (d.type === 'profile')             hasProfile = true
+    } catch {}
+  }
+  return { peopleNames, placeNames, hasProfile }
+}
+
 // ── Preview builders ────────────────────────────────────────────────────────
 
 function buildThemes(state: OnboardingState): Theme[] {
@@ -148,27 +169,45 @@ function buildRelations(state: OnboardingState, people: Person[]): PersonRelatio
 // ── Helpers résumé contexte ────────────────────────────────────────────────
 
 function buildExistingContext(data: {
-  displayName: string; birthYear: number | null
-  people:  Array<{ name: string; relation: string | null }>
-  themes:  Array<{ name: string }>
-  events:  Array<{ year: number; title: string }>
+  displayName: string
+  birthYear:   number | null
+  portrait:    string | null
+  people:      Array<{ name: string; relation: string | null; ai_summary?: string | null }>
+  themes:      Array<{ name: string }>
+  events:      Array<{ year: number; title: string }>
 }): string {
+  const lines: string[] = [
+    `Prénom : ${data.displayName || 'non renseigné'}${data.birthYear ? ` (né en ${data.birthYear})` : ''}`,
+  ]
+
+  if (data.portrait) {
+    lines.push(`Portrait mémorisé : ${data.portrait}`)
+  }
+
   const peopleList = data.people.length
     ? data.people.map(p => `${p.name}${p.relation ? ` (${p.relation})` : ''}`).join(', ')
     : 'aucun'
+  lines.push(`Proches : ${peopleList}`)
+
+  const summaries = data.people.filter(p => p.ai_summary)
+  if (summaries.length > 0) {
+    lines.push('Mémoire des proches :')
+    for (const p of summaries) {
+      lines.push(`  ${p.name} — ${p.ai_summary}`)
+    }
+  }
+
   const themesList = data.themes.length
     ? data.themes.map(t => `"${t.name}"`).join(', ')
     : 'aucune'
+  lines.push(`Thématiques déjà créées (réutilise ces libellés EXACTEMENT) : ${themesList}`)
+
   const eventsList = data.events.length
     ? data.events.map(e => `${e.title} — ${e.year}`).join(', ')
     : 'aucun'
+  lines.push(`Événements : ${eventsList}`)
 
-  return [
-    `Prénom : ${data.displayName || 'non renseigné'}${data.birthYear ? ` (né en ${data.birthYear})` : ''}`,
-    `Proches : ${peopleList}`,
-    `Thématiques déjà créées (réutilise ces libellés EXACTEMENT) : ${themesList}`,
-    `Événements : ${eventsList}`,
-  ].join('\n')
+  return lines.join('\n')
 }
 
 // ── Composant principal ────────────────────────────────────────────────────
@@ -189,9 +228,13 @@ export default function OnboardingPage() {
   const [isLoaded,         setIsLoaded]          = useState(false)
   const [savingIndicator,  setSavingIndicator]   = useState(false)
   const [hiddenThemeIds,   setHiddenThemeIds]    = useState<Set<string>>(new Set())
+  const [selectedPerson,   setSelectedPerson]    = useState<Person | null>(null)
+  const [showMemory,       setShowMemory]         = useState(false)
 
-  const stateRef          = useRef<OnboardingState>(INIT)
-  const dbIds             = useRef<DbIds>({ people: new Map(), themes: new Map(), events: new Map(), relations: new Set() })
+  const stateRef           = useRef<OnboardingState>(INIT)
+  const dbIds              = useRef<DbIds>({ people: new Map(), themes: new Map(), events: new Map(), relations: new Set() })
+  const personSummariesRef = useRef<Map<string, string | null>>(new Map())
+  const userMemoryRef      = useRef<UserMemory | null>(null)
   const existingContextRef = useRef<string | undefined>(undefined)
   const msgsRef           = useRef<HTMLDivElement>(null)
   const inputRef          = useRef<HTMLInputElement>(null)
@@ -357,14 +400,32 @@ export default function OnboardingPage() {
           stateRef.current = loaded
 
           // Peupler dbIds avec les vrais UUIDs
-          data.people.forEach((p: { id: string; name: string }) => dbIds.current.people.set(p.name.toLowerCase(), p.id))
+          data.people.forEach((p: { id: string; name: string; ai_summary?: string | null }) => {
+            dbIds.current.people.set(p.name.toLowerCase(), p.id)
+            personSummariesRef.current.set(p.id, p.ai_summary ?? null)
+          })
           data.themes.forEach((t: { id: string; name: string }) => dbIds.current.themes.set(t.name, t.id))
           data.events.forEach((e: { id: string; year: number; title: string }) => dbIds.current.events.set(`${e.year}:${e.title}`, e.id))
           data.relations.forEach((r: { person_a_id: string; person_b_id: string }) => dbIds.current.relations.add(`${r.person_a_id}:${r.person_b_id}`))
 
           if (data.events.length > 0) setPhase(2)
 
-          existingContextRef.current = buildExistingContext(data)
+          existingContextRef.current = buildExistingContext({
+            displayName: data.displayName ?? '',
+            birthYear:   data.birthYear   ?? null,
+            portrait:    data.portrait    ?? null,
+            people:      data.people ?? [],
+            themes:      data.themes ?? [],
+            events:      data.events ?? [],
+          })
+
+          userMemoryRef.current = {
+            id: '', user_id: '',
+            birth_year:              data.birthYear ?? null,
+            portrait:                data.portrait  ?? null,
+            default_narrative_style: 'narrative',
+            created_at: '', updated_at: '',
+          }
         }
 
         setIsLoaded(true)
@@ -376,6 +437,90 @@ export default function OnboardingPage() {
   useEffect(() => {
     if (isLoaded) sendToAI([])
   }, [isLoaded]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Rafraîchissement état depuis la DB (après édition manuelle) ──────
+
+  const refreshFromDb = useCallback(async () => {
+    try {
+      const res  = await fetch('/api/onboarding/state')
+      const data = await res.json()
+
+      const loaded: OnboardingState = {
+        displayName:      data.displayName ?? '',
+        birthYear:        data.birthYear   ?? 1960,
+        keyPlaces:        [],
+        dominantEmotions: [],
+        people: (data.people ?? []).map((p: { name: string; relation: string | null; relation_type: string | null }) => ({
+          name:         p.name,
+          relation:     p.relation     ?? '',
+          relationType: (p.relation_type ?? 'autre') as CollectedPerson['relationType'],
+        })),
+        relations: (data.relations ?? []).map((r: { person_a_id: string; person_b_id: string; relation_label: string | null }) => {
+          const a = data.people.find((p: { id: string; name: string }) => p.id === r.person_a_id)
+          const b = data.people.find((p: { id: string; name: string }) => p.id === r.person_b_id)
+          return { aName: a?.name ?? '', bName: b?.name ?? '', label: r.relation_label ?? '' }
+        }).filter((r: CollectedRelation) => r.aName && r.bName),
+        events: (data.events ?? []).map((e: { year: number; title: string; theme_ids: string[]; is_pivot?: boolean; emotional_intensity?: number }) => ({
+          year:               e.year,
+          title:              e.title,
+          isPivot:            e.is_pivot ?? false,
+          emotionalIntensity: e.emotional_intensity ?? 1,
+          themeNames: (e.theme_ids ?? [])
+            .map((id: string) => data.themes?.find((t: { id: string; name: string }) => t.id === id)?.name)
+            .filter(Boolean) as string[],
+        })),
+      }
+      setState(loaded)
+      stateRef.current = loaded
+
+      dbIds.current.people.clear()
+      dbIds.current.themes.clear()
+      dbIds.current.events.clear()
+      dbIds.current.relations = new Set()
+      personSummariesRef.current.clear()
+
+      data.people.forEach((p: { id: string; name: string; ai_summary?: string | null }) => {
+        dbIds.current.people.set(p.name.toLowerCase(), p.id)
+        personSummariesRef.current.set(p.id, p.ai_summary ?? null)
+      })
+      data.themes.forEach((t: { id: string; name: string }) => dbIds.current.themes.set(t.name, t.id))
+      data.events.forEach((e: { id: string; year: number; title: string }) => dbIds.current.events.set(`${e.year}:${e.title}`, e.id))
+      data.relations.forEach((r: { person_a_id: string; person_b_id: string }) => dbIds.current.relations.add(`${r.person_a_id}:${r.person_b_id}`))
+
+      userMemoryRef.current = {
+        id: '', user_id: '',
+        birth_year:              data.birthYear ?? null,
+        portrait:                data.portrait  ?? null,
+        default_narrative_style: 'narrative',
+        created_at: '', updated_at: '',
+      }
+
+      if ((data.events ?? []).length > 0) setPhase(2)
+      setSelectedPerson(null)
+    } catch {
+      // erreur silencieuse — la toile reste dans son état actuel
+    }
+  }, [])
+
+  // ── Synchronisation mémoire (non-bloquante) ───────────────────────────
+
+  const syncMemory = useCallback(async (
+    messages:         Array<{ role: 'user' | 'assistant'; content: string }>,
+    peopleNames:      string[],
+    placeNames:       string[],
+    hasProfileUpdate: boolean,
+  ) => {
+    if (!hasProfileUpdate && !peopleNames.length && !placeNames.length) return
+    try {
+      await fetch('/api/onboarding/sync-memory', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ recentMessages: messages, peopleNames, placeNames, hasProfileUpdate }),
+      })
+    } catch (err) {
+      console.error('[syncMemory]', err)
+    }
+  }, [])
 
   // ── Finalisation ──────────────────────────────────────────────────────
 
@@ -449,13 +594,24 @@ export default function OnboardingPage() {
         return
       }
 
+      // Synchronisation mémoire (fire and forget) — déclenché dès qu'il y a des extracts
+      if (buffer.includes('```onboarding-extract')) {
+        const extractedEntities = extractMentionedEntities(buffer)
+        void syncMemory(
+          [...msgs, { role: 'assistant' as const, content: buffer }],
+          extractedEntities.peopleNames,
+          extractedEntities.placeNames,
+          extractedEntities.hasProfile,
+        )
+      }
+
       setApiMessages(prev => [...prev, { role: 'assistant', content: buffer }])
 
     } finally {
       setStreaming(false)
       setTimeout(() => inputRef.current?.focus(), 100)
     }
-  }, [scrollDown, saveExtracts, saveOnboarding])
+  }, [scrollDown, saveExtracts, saveOnboarding, syncMemory])
 
   const handleSend = useCallback(async () => {
     const text = inputVal.trim()
@@ -470,6 +626,16 @@ export default function OnboardingPage() {
 
     await sendToAI(newMsgs)
   }, [inputVal, streaming, saving, apiMessages, sendToAI, scrollDown])
+
+  function handlePersonClick(previewPerson: Person) {
+    const realId = dbIds.current.people.get(previewPerson.name.toLowerCase())
+    if (!realId) return
+    setSelectedPerson({
+      ...previewPerson,
+      id:         realId,
+      ai_summary: personSummariesRef.current.get(realId) ?? null,
+    })
+  }
 
   function toggleTheme(id: string) {
     setHiddenThemeIds(prev => {
@@ -507,9 +673,13 @@ export default function OnboardingPage() {
           {savingIndicator && (
             <span className="text-[11px] text-[#8C7565] italic">Sauvegarde…</span>
           )}
-          {existingContextRef.current && (
-            <a href="/tableau" className="text-[11px] text-[#8C7565] hover:text-[#3D2B1A] transition-colors">
-              ← Mon tableau
+          {messages.length > 0 && (
+            <a
+              href="/tableau"
+              title="Tes données sont sauvegardées automatiquement — tu pourras reprendre ici à tout moment"
+              className="text-[11px] text-[#8C7565] border border-[#E6DAC8] rounded-lg px-2.5 py-1 hover:border-[#9B5E3A] hover:text-[#3D2B1A] transition-colors"
+            >
+              ⏸ Faire une pause
             </a>
           )}
           <span className="text-[11px] text-[#8C7565] bg-[#FAF6F0] border border-[#E6DAC8] rounded-full px-3 py-1">
@@ -648,13 +818,40 @@ export default function OnboardingPage() {
               {phase === 1 ? 'Tes proches' : 'Ta toile'}
             </p>
             <div className="flex-1">
-              <RelationsGraph people={people} relations={relations} userName={state.displayName || 'Moi'} />
+              <RelationsGraph
+                people={people}
+                relations={relations}
+                userName={state.displayName || 'Moi'}
+                onPersonClick={handlePersonClick}
+                onUserClick={() => setShowMemory(true)}
+              />
             </div>
           </div>
         </div>
       </div>
 
       <MobileNav active={mobileView} phase={phase} onChange={setMobileView} />
+
+      {showMemory && (
+        <MemoryPanel
+          portrait={userMemoryRef.current}
+          themes={themes}
+          userName={state.displayName || 'Moi'}
+          onClose={() => setShowMemory(false)}
+        />
+      )}
+
+      {selectedPerson && (
+        <PersonPanel
+          person={selectedPerson}
+          allPeople={people.map(p => ({
+            ...p,
+            id: dbIds.current.people.get(p.name.toLowerCase()) ?? '',
+          })).filter(p => p.id !== '')}
+          onClose={() => setSelectedPerson(null)}
+          onSaved={refreshFromDb}
+        />
+      )}
     </div>
   )
 }

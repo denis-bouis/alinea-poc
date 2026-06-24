@@ -9,6 +9,7 @@ type Props = {
   relations: PersonRelation[]
   userName: string
   onPersonClick?: (person: Person) => void
+  onUserClick?:   () => void
 }
 
 type Node = d3.SimulationNodeDatum & {
@@ -35,7 +36,7 @@ const C = {
   bg:     '#FAF6F0',
 }
 
-export default function RelationsGraph({ people, relations, userName, onPersonClick }: Props) {
+export default function RelationsGraph({ people, relations, userName, onPersonClick, onUserClick }: Props) {
   const svgRef = useRef<SVGSVGElement>(null)
   const simRef = useRef<d3.Simulation<Node, Link> | null>(null)
 
@@ -98,9 +99,11 @@ export default function RelationsGraph({ people, relations, userName, onPersonCl
     // Nœuds
     const ng = nodeG.selectAll<SVGGElement, Node>('g.node')
       .data(nodes).join('g').attr('class', 'node')
-      .style('cursor', d => d.isUser ? 'default' : 'pointer')
+      .style('cursor', d => (d.isUser && onUserClick) || !d.isUser ? 'pointer' : 'default')
       .on('click', (_, d) => {
-        if (!d.isUser) {
+        if (d.isUser) {
+          onUserClick?.()
+        } else {
           const person = people.find(p => p.id === d.id)
           if (person) onPersonClick?.(person)
         }
