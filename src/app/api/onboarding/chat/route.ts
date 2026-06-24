@@ -95,6 +95,20 @@ Lieu marquant :
 {"type":"dominant_emotion","value":"joyeux","context":"enfance"}
 \`\`\`
 
+Exemple — plusieurs personnes mentionnées dans un même message :
+\`\`\`onboarding-extract
+{"type":"person","name":"Manon","relation":"fille aînée","relationType":"famille"}
+\`\`\`
+\`\`\`onboarding-extract
+{"type":"person","name":"Pierre","relation":"fils","relationType":"famille"}
+\`\`\`
+\`\`\`onboarding-extract
+{"type":"person","name":"Yuna","relation":"petite-fille","relationType":"famille"}
+\`\`\`
+\`\`\`onboarding-extract
+{"type":"relation","aName":"Manon","bName":"Yuna","label":"mère de"}
+\`\`\`
+
 Règles d'extraction :
 - relationType est l'un de : famille | amitié | professionnel | romantique | autre
 - Émets un bloc {"type":"theme"} pour chaque grande période ou chapitre de vie mentionné à l'étape 2 — une thématique par bloc.
@@ -103,7 +117,7 @@ Règles d'extraction :
 - emotionalIntensity : 0 (neutre) à 3 (très intense) — estime selon le vécu exprimé
 - N'extrais que ce que l'utilisateur a explicitement dit. Ne jamais inventer.
 - Tu peux émettre plusieurs blocs dans le même message.
-- Ne réextrais pas une information déjà extraite.
+- RÈGLE CRITIQUE : une personne est "déjà extraite" uniquement si elle figure dans la liste "Personnes connues" du contexte de reprise. Si ce n'est pas le cas, émets TOUJOURS son bloc même si tu l'as mentionnée dans ta réponse textuelle.
 
 ## Signal de fin d'onboarding
 
