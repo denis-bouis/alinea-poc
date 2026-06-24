@@ -164,9 +164,9 @@ export default function FriseSVG({ themes, events, birthYear, onEventClick }: Pr
     // Connecteurs cross-thème
     const themeIds = themes.map(t => t.id)
     events
-      .filter(ev => ev.theme_ids.filter(id => themeIds.includes(id)).length > 1)
+      .filter(ev => (ev.theme_ids ?? []).filter(id => themeIds.includes(id)).length > 1)
       .forEach(ev => {
-        const active = ev.theme_ids.filter(id => themeIds.includes(id))
+        const active = (ev.theme_ids ?? []).filter(id => themeIds.includes(id))
         const ys = active
           .map(id => FM.top + themes.findIndex(t => t.id === id) * (BAND_H + BAND_GAP) + BAND_H / 2)
           .sort((a, b) => a - b)
@@ -179,7 +179,7 @@ export default function FriseSVG({ themes, events, birthYear, onEventClick }: Pr
     // Événements
     themes.forEach((theme, i) => {
       const bY = FM.top + i * (BAND_H + BAND_GAP)
-      events.filter(ev => ev.theme_ids.includes(theme.id)).forEach(ev => {
+      events.filter(ev => (ev.theme_ids ?? []).includes(theme.id)).forEach(ev => {
         const cx       = yearX(ev.year)
         const cy       = bY + BAND_H / 2
         const preBirth = ev.year < birthYear

@@ -81,7 +81,7 @@ export default function TableauClient({ userName, themes, events, people, relati
   const friseH        = Math.max(160, 70 + visibleThemes.length * 42)
 
   const eventCountsByTheme = Object.fromEntries(
-    themes.map(t => [t.id, events.filter(e => e.theme_ids.includes(t.id)).length])
+    themes.map(t => [t.id, events.filter(e => (e.theme_ids ?? []).includes(t.id)).length])
   )
 
   return (
