@@ -12,8 +12,8 @@ type Props = {
 export default function MemoryPanel({ portrait, themes, userName, onClose }: Props) {
   return (
     <>
-      <div className="fixed inset-0 bg-black/20 z-40" onClick={onClose} />
-      <div className="fixed top-0 right-0 h-full w-[360px] max-w-full bg-white shadow-xl z-50 flex flex-col overflow-hidden">
+      <div className="fixed inset-0 bg-black/20 z-[60]" onClick={onClose} />
+      <div className="fixed top-0 right-0 h-full w-[360px] max-w-full bg-white shadow-xl z-[70] flex flex-col overflow-hidden">
 
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-[#E6DAC8] flex-shrink-0">
