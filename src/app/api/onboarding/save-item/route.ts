@@ -6,6 +6,7 @@ type SaveRequest =
   | { type: 'profile';          displayName: string; birthYear: number }
   | { type: 'person';           name: string; relation: string; relationType: string }
   | { type: 'relation';         aPersonId: string; bPersonId: string; label: string }
+  | { type: 'theme';            name: string }
   | { type: 'event';            year: number; title: string; themeNames: string[]; isPivot?: boolean; emotionalIntensity?: number }
   | { type: 'key_place';        name: string; role: string }
   | { type: 'dominant_emotion'; value: string; context: string }
@@ -61,6 +62,22 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ type: 'relation', id: created?.id ?? null })
       }
 
+      // ── Thématique standalone ─────────────────────────────────────────────
+      case 'theme': {
+        const { data: existingThemes } = await supabase
+          .from('themes').select('id, color').eq('user_id', uid)
+        const existing = await supabase
+          .from('themes').select('id').eq('user_id', uid).ilike('name', body.name).maybeSingle()
+        if (existing.data) return NextResponse.json({ type: 'theme', id: existing.data.id })
+
+        const color = nextThemeColor((existingThemes ?? []).map(t => t.color))
+        const { data: created } = await supabase
+          .from('themes')
+          .upsert({ user_id: uid, name: body.name, color, maturity: 'emerging' }, { onConflict: 'user_id,name' })
+          .select('id').single()
+        return NextResponse.json({ type: 'theme', id: created?.id ?? null })
+      }
+
       // ── Événement (+ thématiques via life_event_themes) ───────────────────
       case 'event': {
         // Trouver ou créer les thématiques
@@ -77,7 +94,9 @@ export async function POST(request: NextRequest) {
             const color = nextThemeColor(existingColors)
             existingColors.push(color)
             const { data: created } = await supabase
-              .from('themes').insert({ user_id: uid, name, color, maturity: 'emerging' }).select('id').single()
+              .from('themes')
+              .upsert({ user_id: uid, name, color, maturity: 'emerging' }, { onConflict: 'user_id,name' })
+              .select('id').single()
             if (created) themeMap[name] = created.id
           }
         }

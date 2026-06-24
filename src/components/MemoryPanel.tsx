@@ -1,16 +1,15 @@
 'use client'
 
-import type { Theme, Person, UserMemory } from '@/types/domain'
+import type { Theme, UserMemory } from '@/types/domain'
 
 type Props = {
   portrait:  UserMemory | null
   themes:    Theme[]
-  people:    Person[]
   userName:  string
   onClose:   () => void
 }
 
-export default function MemoryPanel({ portrait, themes, people, userName, onClose }: Props) {
+export default function MemoryPanel({ portrait, themes, userName, onClose }: Props) {
   return (
     <>
       <div className="fixed inset-0 bg-black/20 z-40" onClick={onClose} />
@@ -64,31 +63,6 @@ export default function MemoryPanel({ portrait, themes, people, userName, onClos
             </div>
           </section>
 
-          {/* Personnes */}
-          <section>
-            <h3 className="text-[10px] font-bold tracking-widest uppercase text-[#8C7565] mb-2">
-              Personnes ({people.length})
-            </h3>
-            <div className="flex flex-col gap-2">
-              {people.map(p => (
-                <div key={p.id} className="bg-[#FAF6F0] rounded-xl p-3">
-                  <div className="flex items-center gap-1 mb-1">
-                    <span className="font-semibold text-[13px] text-[#3D2B1A]">{p.name}</span>
-                    {p.relation && (
-                      <span className="text-[11px] text-[#8C7565]">· {p.relation}</span>
-                    )}
-                  </div>
-                  {p.ai_summary
-                    ? <p className="text-[12px] text-[#4A3728] leading-relaxed italic">{p.ai_summary}</p>
-                    : <p className="text-[11px] text-[#8C7565] italic">Résumé non encore généré.</p>
-                  }
-                </div>
-              ))}
-              {people.length === 0 && (
-                <p className="text-[12px] text-[#8C7565] italic">Aucune personne.</p>
-              )}
-            </div>
-          </section>
         </div>
       </div>
     </>

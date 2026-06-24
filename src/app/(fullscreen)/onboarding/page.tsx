@@ -4,11 +4,16 @@ import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import dynamic from 'next/dynamic'
 import MobileNav from '@/components/MobileNav'
-import type { Theme, LifeEvent, Person, PersonRelation } from '@/types/domain'
+import PersonPanel from '@/components/PersonPanel'
+import MemoryPanel from '@/components/MemoryPanel'
+import type { Theme, LifeEvent, Person, PersonRelation, UserMemory } from '@/types/domain'
 import { nextThemeColor } from '@/types/domain'
 
 const RelationsGraph = dynamic(() => import('@/components/RelationsGraph'), { ssr: false })
+const FamilyTree     = dynamic(() => import('@/components/FamilyTree'),     { ssr: false })
 const FriseSVG       = dynamic(() => import('@/components/FriseSVG'),       { ssr: false })
+
+type ToileView = 'relations' | 'famille'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -32,6 +37,7 @@ type OnboardingState = {
   people:           CollectedPerson[]
   relations:        CollectedRelation[]
   events:           CollectedEvent[]
+  themeNames:       string[]
   keyPlaces:        CollectedKeyPlace[]
   dominantEmotions: CollectedEmotion[]
 }
@@ -71,6 +77,11 @@ function parseAndMerge(text: string, current: OnboardingState): OnboardingState 
             next.relations = [...next.relations, { aName: d.aName, bName: d.bName, label: d.label ?? '' }]
           }
           break
+        case 'theme':
+          if (d.name && !next.themeNames.some(n => n.toLowerCase() === d.name.toLowerCase())) {
+            next.themeNames = [...next.themeNames, d.name]
+          }
+          break
         case 'event':
           if (d.year && d.title && !next.events.some(e => e.year === Number(d.year) && e.title === d.title)) {
             next.events = [...next.events, { year: Number(d.year), title: d.title, themeNames: d.themeNames ?? [], isPivot: d.isPivot ?? false, emotionalIntensity: d.emotionalIntensity ?? 1 }]
@@ -101,10 +112,34 @@ function stripBlocks(text: string): string {
     .trim()
 }
 
+function extractMentionedEntities(buffer: string): {
+  peopleNames: string[]
+  placeNames:  string[]
+  themeNames:  string[]
+  hasProfile:  boolean
+} {
+  const peopleNames: string[] = []
+  const placeNames:  string[] = []
+  const themeNames:  string[] = []
+  let hasProfile = false
+  for (const match of buffer.matchAll(EXTRACT_RE)) {
+    try {
+      const d = JSON.parse(match[1])
+      if (d.type === 'person'    && d.name) peopleNames.push(d.name as string)
+      if (d.type === 'key_place' && d.name) placeNames.push(d.name as string)
+      if (d.type === 'theme'     && d.name) themeNames.push(d.name as string)
+      if (d.type === 'event' && Array.isArray(d.themeNames)) themeNames.push(...d.themeNames as string[])
+      if (d.type === 'profile')             hasProfile = true
+    } catch {}
+  }
+  return { peopleNames, placeNames, themeNames: [...new Set(themeNames)], hasProfile }
+}
+
 // ── Preview builders ────────────────────────────────────────────────────────
 
 function buildThemes(state: OnboardingState): Theme[] {
-  const names  = [...new Set(state.events.flatMap(e => e.themeNames))]
+  const fromEvents = state.events.flatMap(e => e.themeNames)
+  const names = [...new Set([...state.themeNames, ...fromEvents])]
   const colors: string[] = []
   return names.map(name => {
     const color = nextThemeColor(colors)
@@ -148,32 +183,50 @@ function buildRelations(state: OnboardingState, people: Person[]): PersonRelatio
 // ── Helpers résumé contexte ────────────────────────────────────────────────
 
 function buildExistingContext(data: {
-  displayName: string; birthYear: number | null
-  people:  Array<{ name: string; relation: string | null }>
-  themes:  Array<{ name: string }>
-  events:  Array<{ year: number; title: string }>
+  displayName: string
+  birthYear:   number | null
+  portrait:    string | null
+  people:      Array<{ name: string; relation: string | null; ai_summary?: string | null }>
+  themes:      Array<{ name: string }>
+  events:      Array<{ year: number; title: string }>
 }): string {
+  const lines: string[] = [
+    `Prénom : ${data.displayName || 'non renseigné'}${data.birthYear ? ` (né en ${data.birthYear})` : ''}`,
+  ]
+
+  if (data.portrait) {
+    lines.push(`Portrait mémorisé : ${data.portrait}`)
+  }
+
   const peopleList = data.people.length
     ? data.people.map(p => `${p.name}${p.relation ? ` (${p.relation})` : ''}`).join(', ')
     : 'aucun'
+  lines.push(`Proches : ${peopleList}`)
+
+  const summaries = data.people.filter(p => p.ai_summary)
+  if (summaries.length > 0) {
+    lines.push('Mémoire des proches :')
+    for (const p of summaries) {
+      lines.push(`  ${p.name} — ${p.ai_summary}`)
+    }
+  }
+
   const themesList = data.themes.length
     ? data.themes.map(t => `"${t.name}"`).join(', ')
     : 'aucune'
+  lines.push(`Thématiques déjà créées (réutilise ces libellés EXACTEMENT) : ${themesList}`)
+
   const eventsList = data.events.length
     ? data.events.map(e => `${e.title} — ${e.year}`).join(', ')
     : 'aucun'
+  lines.push(`Événements : ${eventsList}`)
 
-  return [
-    `Prénom : ${data.displayName || 'non renseigné'}${data.birthYear ? ` (né en ${data.birthYear})` : ''}`,
-    `Proches : ${peopleList}`,
-    `Thématiques déjà créées (réutilise ces libellés EXACTEMENT) : ${themesList}`,
-    `Événements : ${eventsList}`,
-  ].join('\n')
+  return lines.join('\n')
 }
 
 // ── Composant principal ────────────────────────────────────────────────────
 
-const INIT: OnboardingState = { displayName: '', birthYear: 1960, people: [], relations: [], events: [], keyPlaces: [], dominantEmotions: [] }
+const INIT: OnboardingState = { displayName: '', birthYear: 1960, people: [], relations: [], events: [], themeNames: [], keyPlaces: [], dominantEmotions: [] }
 
 export default function OnboardingPage() {
   const router = useRouter()
@@ -189,10 +242,18 @@ export default function OnboardingPage() {
   const [isLoaded,         setIsLoaded]          = useState(false)
   const [savingIndicator,  setSavingIndicator]   = useState(false)
   const [hiddenThemeIds,   setHiddenThemeIds]    = useState<Set<string>>(new Set())
+  const [selectedPerson,   setSelectedPerson]    = useState<Person | null>(null)
+  const [showMemory,       setShowMemory]         = useState(false)
+  const [toileView,        setToileView]          = useState<ToileView>('relations')
+  const [toileCollapsed,   setToileCollapsed]     = useState(false)
+  const [toileFullscreen,  setToileFullscreen]    = useState(false)
 
-  const stateRef          = useRef<OnboardingState>(INIT)
-  const dbIds             = useRef<DbIds>({ people: new Map(), themes: new Map(), events: new Map(), relations: new Set() })
-  const existingContextRef = useRef<string | undefined>(undefined)
+  const stateRef            = useRef<OnboardingState>(INIT)
+  const dbIds               = useRef<DbIds>({ people: new Map(), themes: new Map(), events: new Map(), relations: new Set() })
+  const personSummariesRef  = useRef<Map<string, string | null>>(new Map())  // uuid → ai_summary
+  const themeSummariesRef   = useRef<Map<string, string | null>>(new Map())  // name → ai_summary
+  const userMemoryRef       = useRef<UserMemory | null>(null)
+  const existingContextRef  = useRef<string | undefined>(undefined)
   const msgsRef           = useRef<HTMLDivElement>(null)
   const inputRef          = useRef<HTMLInputElement>(null)
 
@@ -266,6 +327,20 @@ export default function OnboardingPage() {
       )
     }
 
+    // Nouveaux thèmes standalone
+    const newThemes = next.themeNames.filter(n => !ids.themes.has(n.toLowerCase()))
+    for (const name of newThemes) {
+      saves2.push(
+        fetch('/api/onboarding/save-item', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type: 'theme', name }),
+        })
+          .then(r => r.json())
+          .then(data => { if (data.id) ids.themes.set(name.toLowerCase(), data.id) })
+      )
+    }
+
     // Nouveaux événements
     const newEvents = next.events.filter(e => !ids.events.has(`${e.year}:${e.title}`))
     for (const ev of newEvents) {
@@ -333,6 +408,7 @@ export default function OnboardingPage() {
             birthYear:        data.birthYear   ?? 1960,
             keyPlaces:        [],
             dominantEmotions: [],
+            themeNames:       (data.themes ?? []).map((t: { name: string }) => t.name),
             people: (data.people ?? []).map((p: { name: string; relation: string | null; relation_type: string | null }) => ({
               name:         p.name,
               relation:     p.relation     ?? '',
@@ -357,14 +433,35 @@ export default function OnboardingPage() {
           stateRef.current = loaded
 
           // Peupler dbIds avec les vrais UUIDs
-          data.people.forEach((p: { id: string; name: string }) => dbIds.current.people.set(p.name.toLowerCase(), p.id))
-          data.themes.forEach((t: { id: string; name: string }) => dbIds.current.themes.set(t.name, t.id))
+          data.people.forEach((p: { id: string; name: string; ai_summary?: string | null }) => {
+            dbIds.current.people.set(p.name.toLowerCase(), p.id)
+            personSummariesRef.current.set(p.id, p.ai_summary ?? null)
+          })
+          data.themes.forEach((t: { id: string; name: string; ai_summary?: string | null }) => {
+            dbIds.current.themes.set(t.name, t.id)
+            themeSummariesRef.current.set(t.name, t.ai_summary ?? null)
+          })
           data.events.forEach((e: { id: string; year: number; title: string }) => dbIds.current.events.set(`${e.year}:${e.title}`, e.id))
           data.relations.forEach((r: { person_a_id: string; person_b_id: string }) => dbIds.current.relations.add(`${r.person_a_id}:${r.person_b_id}`))
 
           if (data.events.length > 0) setPhase(2)
 
-          existingContextRef.current = buildExistingContext(data)
+          existingContextRef.current = buildExistingContext({
+            displayName: data.displayName ?? '',
+            birthYear:   data.birthYear   ?? null,
+            portrait:    data.portrait    ?? null,
+            people:      data.people ?? [],
+            themes:      data.themes ?? [],
+            events:      data.events ?? [],
+          })
+
+          userMemoryRef.current = {
+            id: '', user_id: '',
+            birth_year:              data.birthYear ?? null,
+            portrait:                data.portrait  ?? null,
+            default_narrative_style: 'narrative',
+            created_at: '', updated_at: '',
+          }
         }
 
         setIsLoaded(true)
@@ -376,6 +473,96 @@ export default function OnboardingPage() {
   useEffect(() => {
     if (isLoaded) sendToAI([])
   }, [isLoaded]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Rafraîchissement état depuis la DB (après édition manuelle) ──────
+
+  const refreshFromDb = useCallback(async () => {
+    try {
+      const res  = await fetch('/api/onboarding/state')
+      const data = await res.json()
+
+      const loaded: OnboardingState = {
+        displayName:      data.displayName ?? '',
+        birthYear:        data.birthYear   ?? 1960,
+        keyPlaces:        [],
+        dominantEmotions: [],
+        themeNames:       (data.themes ?? []).map((t: { name: string }) => t.name),
+        people: (data.people ?? []).map((p: { name: string; relation: string | null; relation_type: string | null }) => ({
+          name:         p.name,
+          relation:     p.relation     ?? '',
+          relationType: (p.relation_type ?? 'autre') as CollectedPerson['relationType'],
+        })),
+        relations: (data.relations ?? []).map((r: { person_a_id: string; person_b_id: string; relation_label: string | null }) => {
+          const a = data.people.find((p: { id: string; name: string }) => p.id === r.person_a_id)
+          const b = data.people.find((p: { id: string; name: string }) => p.id === r.person_b_id)
+          return { aName: a?.name ?? '', bName: b?.name ?? '', label: r.relation_label ?? '' }
+        }).filter((r: CollectedRelation) => r.aName && r.bName),
+        events: (data.events ?? []).map((e: { year: number; title: string; theme_ids: string[]; is_pivot?: boolean; emotional_intensity?: number }) => ({
+          year:               e.year,
+          title:              e.title,
+          isPivot:            e.is_pivot ?? false,
+          emotionalIntensity: e.emotional_intensity ?? 1,
+          themeNames: (e.theme_ids ?? [])
+            .map((id: string) => data.themes?.find((t: { id: string; name: string }) => t.id === id)?.name)
+            .filter(Boolean) as string[],
+        })),
+      }
+      setState(loaded)
+      stateRef.current = loaded
+
+      dbIds.current.people.clear()
+      dbIds.current.themes.clear()
+      dbIds.current.events.clear()
+      dbIds.current.relations = new Set()
+      personSummariesRef.current.clear()
+      themeSummariesRef.current.clear()
+
+      data.people.forEach((p: { id: string; name: string; ai_summary?: string | null }) => {
+        dbIds.current.people.set(p.name.toLowerCase(), p.id)
+        personSummariesRef.current.set(p.id, p.ai_summary ?? null)
+      })
+      data.themes.forEach((t: { id: string; name: string; ai_summary?: string | null }) => {
+        dbIds.current.themes.set(t.name, t.id)
+        themeSummariesRef.current.set(t.name, t.ai_summary ?? null)
+      })
+      data.events.forEach((e: { id: string; year: number; title: string }) => dbIds.current.events.set(`${e.year}:${e.title}`, e.id))
+      data.relations.forEach((r: { person_a_id: string; person_b_id: string }) => dbIds.current.relations.add(`${r.person_a_id}:${r.person_b_id}`))
+
+      userMemoryRef.current = {
+        id: '', user_id: '',
+        birth_year:              data.birthYear ?? null,
+        portrait:                data.portrait  ?? null,
+        default_narrative_style: 'narrative',
+        created_at: '', updated_at: '',
+      }
+
+      if ((data.events ?? []).length > 0) setPhase(2)
+      setSelectedPerson(null)
+    } catch {
+      // erreur silencieuse — la toile reste dans son état actuel
+    }
+  }, [])
+
+  // ── Synchronisation mémoire (non-bloquante) ───────────────────────────
+
+  const syncMemory = useCallback(async (
+    messages:         Array<{ role: 'user' | 'assistant'; content: string }>,
+    peopleNames:      string[],
+    placeNames:       string[],
+    themeNames:       string[],
+    hasProfileUpdate: boolean,
+  ) => {
+    if (!hasProfileUpdate && !peopleNames.length && !placeNames.length && !themeNames.length) return
+    try {
+      await fetch('/api/onboarding/sync-memory', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ recentMessages: messages, peopleNames, placeNames, themeNames, hasProfileUpdate }),
+      })
+    } catch (err) {
+      console.error('[syncMemory]', err)
+    }
+  }, [])
 
   // ── Finalisation ──────────────────────────────────────────────────────
 
@@ -449,13 +636,25 @@ export default function OnboardingPage() {
         return
       }
 
+      // Synchronisation mémoire (fire and forget) — déclenché dès qu'il y a des extracts
+      if (buffer.includes('```onboarding-extract')) {
+        const extractedEntities = extractMentionedEntities(buffer)
+        void syncMemory(
+          [...msgs, { role: 'assistant' as const, content: buffer }],
+          extractedEntities.peopleNames,
+          extractedEntities.placeNames,
+          extractedEntities.themeNames,
+          extractedEntities.hasProfile,
+        )
+      }
+
       setApiMessages(prev => [...prev, { role: 'assistant', content: buffer }])
 
     } finally {
       setStreaming(false)
       setTimeout(() => inputRef.current?.focus(), 100)
     }
-  }, [scrollDown, saveExtracts, saveOnboarding])
+  }, [scrollDown, saveExtracts, saveOnboarding, syncMemory])
 
   const handleSend = useCallback(async () => {
     const text = inputVal.trim()
@@ -470,6 +669,16 @@ export default function OnboardingPage() {
 
     await sendToAI(newMsgs)
   }, [inputVal, streaming, saving, apiMessages, sendToAI, scrollDown])
+
+  function handlePersonClick(previewPerson: Person) {
+    const realId = dbIds.current.people.get(previewPerson.name.toLowerCase())
+    if (!realId) return
+    setSelectedPerson({
+      ...previewPerson,
+      id:         realId,
+      ai_summary: personSummariesRef.current.get(realId) ?? null,
+    })
+  }
 
   function toggleTheme(id: string) {
     setHiddenThemeIds(prev => {
@@ -507,9 +716,13 @@ export default function OnboardingPage() {
           {savingIndicator && (
             <span className="text-[11px] text-[#8C7565] italic">Sauvegarde…</span>
           )}
-          {existingContextRef.current && (
-            <a href="/tableau" className="text-[11px] text-[#8C7565] hover:text-[#3D2B1A] transition-colors">
-              ← Mon tableau
+          {messages.length > 0 && (
+            <a
+              href="/tableau"
+              title="Tes données sont sauvegardées automatiquement — tu pourras reprendre ici à tout moment"
+              className="text-[11px] text-[#8C7565] border border-[#E6DAC8] rounded-lg px-2.5 py-1 hover:border-[#9B5E3A] hover:text-[#3D2B1A] transition-colors"
+            >
+              ⏸ Faire une pause
             </a>
           )}
           <span className="text-[11px] text-[#8C7565] bg-[#FAF6F0] border border-[#E6DAC8] rounded-full px-3 py-1">
@@ -644,17 +857,161 @@ export default function OnboardingPage() {
             'flex flex-col flex-1 min-h-0',
             mobileView === 'themes' ? 'hidden md:flex' : 'flex',
           ].join(' ')}>
-            <p className="text-[10px] font-bold tracking-widest uppercase text-[#8C7565] px-4 pt-3 pb-0 flex-shrink-0">
-              {phase === 1 ? 'Tes proches' : 'Ta toile'}
-            </p>
-            <div className="flex-1">
-              <RelationsGraph people={people} relations={relations} userName={state.displayName || 'Moi'} />
+
+            {/* Header card */}
+            <div className="flex items-center gap-1 px-3 h-9 border-b border-[#E6DAC8] flex-shrink-0">
+              <div className="flex items-center gap-0.5 bg-[#FAF6F0] rounded-lg p-0.5">
+                <button
+                  onClick={() => setToileView('relations')}
+                  className={[
+                    'text-[10px] px-2 py-0.5 rounded-md transition-colors',
+                    toileView === 'relations'
+                      ? 'bg-white text-[#3D2B1A] shadow-sm font-semibold'
+                      : 'text-[#8C7565] hover:text-[#3D2B1A]',
+                  ].join(' ')}
+                >
+                  {phase === 1 ? 'Proches' : 'Toile'}
+                </button>
+                <button
+                  onClick={() => setToileView('famille')}
+                  className={[
+                    'text-[10px] px-2 py-0.5 rounded-md transition-colors',
+                    toileView === 'famille'
+                      ? 'bg-white text-[#3D2B1A] shadow-sm font-semibold'
+                      : 'text-[#8C7565] hover:text-[#3D2B1A]',
+                  ].join(' ')}
+                >
+                  Famille
+                </button>
+              </div>
+              <div className="ml-auto hidden md:flex items-center gap-1">
+                <button
+                  onClick={() => setToileFullscreen(true)}
+                  title="Plein écran"
+                  className="text-[#8C7565] hover:text-[#3D2B1A] transition-colors"
+                >
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                    <path d="M1 4.5V1.5h3M7.5 1.5h3v3M11 7.5v3h-3M4.5 10.5h-3v-3"/>
+                  </svg>
+                </button>
+                <button
+                  onClick={() => setToileCollapsed(v => !v)}
+                  className="text-[11px] text-[#8C7565] hover:text-[#3D2B1A] transition-colors"
+                >
+                  {toileCollapsed ? '▸' : '▾'}
+                </button>
+              </div>
             </div>
+
+            {/* Corps */}
+            {!toileCollapsed && (
+              <div className="flex-1 min-h-0">
+                {toileView === 'relations' ? (
+                  <RelationsGraph
+                    people={people}
+                    relations={relations}
+                    userName={state.displayName || 'Moi'}
+                    onPersonClick={handlePersonClick}
+                    onUserClick={() => setShowMemory(true)}
+                  />
+                ) : (
+                  <FamilyTree
+                    people={people}
+                    relations={relations}
+                    userName={state.displayName || 'Moi'}
+                    onPersonClick={handlePersonClick}
+                    onUserClick={() => setShowMemory(true)}
+                  />
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>
 
       <MobileNav active={mobileView} phase={phase} onChange={setMobileView} />
+
+      {showMemory && (
+        <MemoryPanel
+          portrait={userMemoryRef.current}
+          themes={themes.map(t => ({
+            ...t,
+            ai_summary: themeSummariesRef.current.get(t.name) ?? null,
+          }))}
+          userName={state.displayName || 'Moi'}
+          onClose={() => setShowMemory(false)}
+        />
+      )}
+
+      {selectedPerson && (
+        <PersonPanel
+          person={selectedPerson}
+          allPeople={people.map(p => ({
+            ...p,
+            id: dbIds.current.people.get(p.name.toLowerCase()) ?? '',
+          })).filter(p => p.id !== '')}
+          onClose={() => setSelectedPerson(null)}
+          onSaved={refreshFromDb}
+        />
+      )}
+
+      {/* ── Toile / Arbre plein écran ─────────────────────────────────── */}
+      {toileFullscreen && (
+        <div className="fixed inset-0 z-50 bg-[#FAF6F0] flex flex-col">
+          <div className="flex items-center gap-1 px-4 h-10 border-b border-[#E6DAC8] bg-white flex-shrink-0">
+            <div className="flex items-center gap-0.5 bg-[#FAF6F0] rounded-lg p-0.5">
+              <button
+                onClick={() => setToileView('relations')}
+                className={[
+                  'text-[10px] px-2 py-0.5 rounded-md transition-colors',
+                  toileView === 'relations'
+                    ? 'bg-white text-[#3D2B1A] shadow-sm font-semibold'
+                    : 'text-[#8C7565] hover:text-[#3D2B1A]',
+                ].join(' ')}
+              >
+                {phase === 1 ? 'Proches' : 'Toile'}
+              </button>
+              <button
+                onClick={() => setToileView('famille')}
+                className={[
+                  'text-[10px] px-2 py-0.5 rounded-md transition-colors',
+                  toileView === 'famille'
+                    ? 'bg-white text-[#3D2B1A] shadow-sm font-semibold'
+                    : 'text-[#8C7565] hover:text-[#3D2B1A]',
+                ].join(' ')}
+              >
+                Famille
+              </button>
+            </div>
+            <button
+              onClick={() => setToileFullscreen(false)}
+              title="Quitter le plein écran"
+              className="ml-auto text-[13px] text-[#8C7565] hover:text-[#3D2B1A] transition-colors"
+            >
+              ✕
+            </button>
+          </div>
+          <div className="flex-1 min-h-0">
+            {toileView === 'relations' ? (
+              <RelationsGraph
+                people={people}
+                relations={relations}
+                userName={state.displayName || 'Moi'}
+                onPersonClick={handlePersonClick}
+                onUserClick={() => setShowMemory(true)}
+              />
+            ) : (
+              <FamilyTree
+                people={people}
+                relations={relations}
+                userName={state.displayName || 'Moi'}
+                onPersonClick={handlePersonClick}
+                onUserClick={() => setShowMemory(true)}
+              />
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

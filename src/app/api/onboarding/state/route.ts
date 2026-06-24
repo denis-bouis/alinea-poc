@@ -18,7 +18,7 @@ export async function GET() {
     { data: eventThemes },
   ] = await Promise.all([
     supabase.from('profiles').select('display_name, onboarding_step').eq('id', uid).single(),
-    supabase.from('user_memory').select('birth_year').eq('user_id', uid).single(),
+    supabase.from('user_memory').select('birth_year, portrait, key_places').eq('user_id', uid).single(),
     supabase.from('people').select('*').eq('user_id', uid).order('created_at'),
     supabase.from('people_relations').select('*').eq('user_id', uid),
     supabase.from('life_events')
@@ -42,9 +42,11 @@ export async function GET() {
   }))
 
   return NextResponse.json({
-    displayName:      profile?.display_name  ?? '',
-    birthYear:        memory?.birth_year      ?? null,
-    onboardingStep:   profile?.onboarding_step ?? 0,
+    displayName:      profile?.display_name     ?? '',
+    birthYear:        memory?.birth_year         ?? null,
+    portrait:         memory?.portrait           ?? null,
+    keyPlaces:        memory?.key_places         ?? [],
+    onboardingStep:   profile?.onboarding_step   ?? 0,
     people:           people    ?? [],
     relations:        relations ?? [],
     events,

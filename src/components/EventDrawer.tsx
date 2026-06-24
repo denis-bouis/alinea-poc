@@ -7,12 +7,13 @@ import type { LifeEvent, Theme } from '@/types/domain'
 type AlineaRow = { id: string; title: string | null; created_at: string }
 
 type Props = {
-  event:   LifeEvent
-  themes:  Theme[]
-  onClose: () => void
+  event:        LifeEvent
+  themes:       Theme[]
+  onClose:      () => void
+  onStartChat?: () => void
 }
 
-export default function EventDrawer({ event, themes, onClose }: Props) {
+export default function EventDrawer({ event, themes, onClose, onStartChat }: Props) {
   const [alineas, setAlineas] = useState<AlineaRow[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -92,12 +93,21 @@ export default function EventDrawer({ event, themes, onClose }: Props) {
           </section>
 
           {/* CTA documenter */}
-          <a
-            href={`/alinea/new?event_year=${event.year}`}
-            className="flex items-center justify-center gap-2 px-4 py-3 bg-[#9B5E3A] text-white rounded-xl text-[13px] font-semibold hover:bg-[#7A4A2C] transition-colors"
-          >
-            + Documenter cet événement
-          </a>
+          {onStartChat ? (
+            <button
+              onClick={() => { onClose(); onStartChat() }}
+              className="flex items-center justify-center gap-2 px-4 py-3 bg-[#9B5E3A] text-white rounded-xl text-[13px] font-semibold hover:bg-[#7A4A2C] transition-colors w-full"
+            >
+              + Raconter cet événement
+            </button>
+          ) : (
+            <a
+              href={`/alinea/new?event_year=${event.year}`}
+              className="flex items-center justify-center gap-2 px-4 py-3 bg-[#9B5E3A] text-white rounded-xl text-[13px] font-semibold hover:bg-[#7A4A2C] transition-colors"
+            >
+              + Documenter cet événement
+            </a>
+          )}
         </div>
       </div>
     </>
