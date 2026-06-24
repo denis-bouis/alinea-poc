@@ -15,7 +15,7 @@ type ProfileRow = {
   email: string
   display_name: string | null
   avatar_url: string | null
-  onboarding_completed: boolean
+  onboarding_step: number     // 0 = non commencé, 10 = terminé
   tier: 'discovery' | 'memory'
   created_at: string
 }
@@ -36,6 +36,7 @@ type AlineaRow = {
   event_day: number | null
   location: string | null
   ai_memory: string | null
+  status: 'draft' | 'validated'
   created_at: string
   updated_at: string
 }
@@ -58,6 +59,107 @@ type AlineaCircleRow = {
   circle_id: string
 }
 
+type UserMemoryRow = {
+  id: string
+  user_id: string
+  birth_year: number | null
+  portrait: string | null
+  default_narrative_style: string
+  key_places: Array<{ name: string; role: string }>          // migration 009
+  dominant_emotions: Array<{ value: string; context: string }> // migration 009
+  created_at: string
+  updated_at: string
+}
+
+type ThemeRow = {
+  id: string
+  user_id: string
+  name: string
+  color: string
+  maturity: 'emerging' | 'active' | 'major' | 'closed'
+  ai_summary: string | null
+  alinea_count: number   // migration 008 — maintenu par trigger
+  created_at: string
+  updated_at: string
+}
+
+type LifeEventRow = {
+  id: string
+  user_id: string
+  year: number
+  title: string
+  status: 'undocumented' | 'draft' | 'validated'
+  is_pivot: boolean              // migration 009
+  emotional_intensity: number    // migration 009 — 0 à 3
+  created_at: string
+  updated_at: string
+}
+
+type LifeEventThemeRow = {       // migration 008 — remplace life_events.theme_ids
+  life_event_id: string
+  theme_id: string
+  validated: boolean
+  attached_at: string
+}
+
+type AlineaThemeRow = {
+  alinea_id: string
+  theme_id: string
+  relevance_score: number
+  validated_by_user: boolean
+  attached_at: string
+}
+
+type PersonRow = {
+  id: string
+  user_id: string
+  name: string
+  nickname: string | null
+  relation: string | null
+  relation_type: 'famille' | 'amitié' | 'professionnel' | 'romantique' | 'autre' | null
+  birth_year: number | null
+  is_deceased: boolean
+  death_year: number | null
+  first_mention: 'onboarding' | 'frise' | 'alinea' | 'manual'
+  ai_summary: string | null
+  alinea_count: number   // maintenu par trigger
+  pending_qualification: boolean
+  created_at: string
+  updated_at: string
+}
+
+type PersonRelationRow = {
+  id: string
+  user_id: string
+  person_a_id: string
+  person_b_id: string
+  relation_label: string | null
+  confirmed: boolean
+  declared_in: 'dialogue' | 'manual'
+  created_at: string
+}
+
+type LifeEventPeopleRow = {
+  life_event_id: string
+  person_id: string
+}
+
+type AlineaPeopleRow = {
+  alinea_id: string
+  person_id: string
+  role: 'present' | 'mentioned' | 'addressee'
+}
+
+type AiProfileView = {
+  user_id: string
+  display_name: string | null
+  birth_year: number | null
+  portrait: string | null
+  narrative_style: string | null
+  themes_summary: Array<{ name: string; maturity: string }> | null
+  people_summary: Array<{ name: string; relation: string | null; relation_type: string | null }> | null
+}
+
 export type Database = {
   public: {
     Tables: {
@@ -69,7 +171,7 @@ export type Database = {
       }
       alineas: {
         Row: AlineaRow
-        Insert: Omit<AlineaRow, 'id' | 'created_at' | 'updated_at' | 'title' | 'content' | 'media_url' | 'emotion' | 'category' | 'approximate_date' | 'location'> & {
+        Insert: Omit<AlineaRow, 'id' | 'created_at' | 'updated_at' | 'title' | 'content' | 'media_url' | 'emotion' | 'category' | 'approximate_date' | 'location' | 'status'> & {
           title?: string | null
           content?: string | null
           media_url?: string | null
@@ -80,8 +182,93 @@ export type Database = {
           event_month?: number | null
           event_day?: number | null
           location?: string | null
+          status?: 'draft' | 'validated'
         }
         Update: Partial<Omit<AlineaRow, 'id' | 'user_id' | 'created_at' | 'updated_at'>>
+        Relationships: []
+      }
+      user_memory: {
+        Row: UserMemoryRow
+        Insert: {
+          user_id: string
+          id?: string
+          birth_year?: number | null
+          portrait?: string | null
+          default_narrative_style?: string
+          key_places?: Array<{ name: string; role: string }>
+          dominant_emotions?: Array<{ value: string; context: string }>
+        }
+        Update: Partial<Omit<UserMemoryRow, 'id' | 'user_id' | 'created_at' | 'updated_at'>>
+        Relationships: []
+      }
+      themes: {
+        Row: ThemeRow
+        Insert: { user_id: string; name: string; color?: string; maturity?: string; id?: string; ai_summary?: string | null; alinea_count?: number }
+        Update: Partial<Omit<ThemeRow, 'id' | 'user_id' | 'created_at' | 'updated_at'>>
+        Relationships: []
+      }
+      life_events: {
+        Row: LifeEventRow
+        Insert: {
+          user_id: string
+          year: number
+          title: string
+          id?: string
+          status?: string
+          is_pivot?: boolean
+          emotional_intensity?: number
+        }
+        Update: Partial<Omit<LifeEventRow, 'id' | 'user_id' | 'created_at' | 'updated_at'>>
+        Relationships: []
+      }
+      life_event_themes: {
+        Row: LifeEventThemeRow
+        Insert: { life_event_id: string; theme_id: string; validated?: boolean }
+        Update: Partial<Omit<LifeEventThemeRow, 'attached_at'>>
+        Relationships: []
+      }
+      alinea_themes: {
+        Row: AlineaThemeRow
+        Insert: { alinea_id: string; theme_id: string; relevance_score?: number; validated_by_user?: boolean }
+        Update: Partial<AlineaThemeRow>
+        Relationships: []
+      }
+      people: {
+        Row: PersonRow
+        Insert: {
+          user_id: string
+          name: string
+          id?: string
+          nickname?: string | null
+          relation?: string | null
+          relation_type?: string | null
+          birth_year?: number | null
+          is_deceased?: boolean
+          death_year?: number | null
+          first_mention?: string
+          ai_summary?: string | null
+          alinea_count?: number
+          pending_qualification?: boolean
+        }
+        Update: Partial<Omit<PersonRow, 'id' | 'user_id' | 'created_at' | 'updated_at'>>
+        Relationships: []
+      }
+      people_relations: {
+        Row: PersonRelationRow
+        Insert: { user_id: string; person_a_id: string; person_b_id: string; id?: string; relation_label?: string | null; confirmed?: boolean; declared_in?: string }
+        Update: Partial<Omit<PersonRelationRow, 'id' | 'user_id' | 'created_at'>>
+        Relationships: []
+      }
+      life_event_people: {
+        Row: LifeEventPeopleRow
+        Insert: LifeEventPeopleRow
+        Update: Record<string, unknown>
+        Relationships: []
+      }
+      alinea_people: {
+        Row: AlineaPeopleRow
+        Insert: { alinea_id: string; person_id: string; role?: 'present' | 'mentioned' | 'addressee' }
+        Update: Record<string, unknown>
         Relationships: []
       }
       circles: {
@@ -103,7 +290,12 @@ export type Database = {
         Relationships: []
       }
     }
-    Views: Record<string, never>
+    Views: {
+      v_ai_profile: {
+        Row: AiProfileView
+        Relationships: []
+      }
+    }
     Functions: Record<string, never>
   }
 }

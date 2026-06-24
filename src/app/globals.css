@@ -32,3 +32,46 @@ body {
   color: #3D2B1A;
   -webkit-font-smoothing: antialiased;
 }
+
+/* ── Frise — bouton zoom ──────────────────────────────────────────────────── */
+.frise-zoom-btn {
+  width: 26px; height: 26px;
+  display: flex; align-items: center; justify-content: center;
+  border: 1px solid rgba(60, 30, 10, 0.15);
+  border-radius: 6px;
+  background: #FAF6F0;
+  color: #8C7565;
+  font-size: 15px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+  font-family: inherit;
+  line-height: 1;
+}
+.frise-zoom-btn:hover {
+  border-color: #9B5E3A;
+  color: #9B5E3A;
+}
+
+/* ── Mobile — règles responsive ───────────────────────────────────────────── */
+
+/* Le hint de rotation (frise en portrait mobile) */
+.rotate-hint {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 5px 16px;
+  font-size: 11px;
+  color: #8C7565;
+  background: #F0E8DC;
+  border-bottom: 1px solid rgba(60, 30, 10, 0.08);
+  flex-shrink: 0;
+}
+@media (max-width: 640px) and (orientation: portrait) {
+  .rotate-hint { display: flex; }
+}
+
+/* Ajustements landscape mobile */
+@media (max-height: 500px) and (orientation: landscape) and (hover: none) {
+  .frise-zoom-btn { width: 22px; height: 22px; font-size: 12px; }
+}
