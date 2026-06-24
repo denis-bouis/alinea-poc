@@ -34,6 +34,7 @@ type OnboardingState = {
   people:           CollectedPerson[]
   relations:        CollectedRelation[]
   events:           CollectedEvent[]
+  themeNames:       string[]
   keyPlaces:        CollectedKeyPlace[]
   dominantEmotions: CollectedEmotion[]
 }
@@ -73,6 +74,11 @@ function parseAndMerge(text: string, current: OnboardingState): OnboardingState 
             next.relations = [...next.relations, { aName: d.aName, bName: d.bName, label: d.label ?? '' }]
           }
           break
+        case 'theme':
+          if (d.name && !next.themeNames.some(n => n.toLowerCase() === d.name.toLowerCase())) {
+            next.themeNames = [...next.themeNames, d.name]
+          }
+          break
         case 'event':
           if (d.year && d.title && !next.events.some(e => e.year === Number(d.year) && e.title === d.title)) {
             next.events = [...next.events, { year: Number(d.year), title: d.title, themeNames: d.themeNames ?? [], isPivot: d.isPivot ?? false, emotionalIntensity: d.emotionalIntensity ?? 1 }]
@@ -106,26 +112,31 @@ function stripBlocks(text: string): string {
 function extractMentionedEntities(buffer: string): {
   peopleNames: string[]
   placeNames:  string[]
+  themeNames:  string[]
   hasProfile:  boolean
 } {
   const peopleNames: string[] = []
   const placeNames:  string[] = []
+  const themeNames:  string[] = []
   let hasProfile = false
   for (const match of buffer.matchAll(EXTRACT_RE)) {
     try {
       const d = JSON.parse(match[1])
       if (d.type === 'person'    && d.name) peopleNames.push(d.name as string)
       if (d.type === 'key_place' && d.name) placeNames.push(d.name as string)
+      if (d.type === 'theme'     && d.name) themeNames.push(d.name as string)
+      if (d.type === 'event' && Array.isArray(d.themeNames)) themeNames.push(...d.themeNames as string[])
       if (d.type === 'profile')             hasProfile = true
     } catch {}
   }
-  return { peopleNames, placeNames, hasProfile }
+  return { peopleNames, placeNames, themeNames: [...new Set(themeNames)], hasProfile }
 }
 
 // ── Preview builders ────────────────────────────────────────────────────────
 
 function buildThemes(state: OnboardingState): Theme[] {
-  const names  = [...new Set(state.events.flatMap(e => e.themeNames))]
+  const fromEvents = state.events.flatMap(e => e.themeNames)
+  const names = [...new Set([...state.themeNames, ...fromEvents])]
   const colors: string[] = []
   return names.map(name => {
     const color = nextThemeColor(colors)
@@ -212,7 +223,7 @@ function buildExistingContext(data: {
 
 // ── Composant principal ────────────────────────────────────────────────────
 
-const INIT: OnboardingState = { displayName: '', birthYear: 1960, people: [], relations: [], events: [], keyPlaces: [], dominantEmotions: [] }
+const INIT: OnboardingState = { displayName: '', birthYear: 1960, people: [], relations: [], events: [], themeNames: [], keyPlaces: [], dominantEmotions: [] }
 
 export default function OnboardingPage() {
   const router = useRouter()
@@ -231,11 +242,12 @@ export default function OnboardingPage() {
   const [selectedPerson,   setSelectedPerson]    = useState<Person | null>(null)
   const [showMemory,       setShowMemory]         = useState(false)
 
-  const stateRef           = useRef<OnboardingState>(INIT)
-  const dbIds              = useRef<DbIds>({ people: new Map(), themes: new Map(), events: new Map(), relations: new Set() })
-  const personSummariesRef = useRef<Map<string, string | null>>(new Map())
-  const userMemoryRef      = useRef<UserMemory | null>(null)
-  const existingContextRef = useRef<string | undefined>(undefined)
+  const stateRef            = useRef<OnboardingState>(INIT)
+  const dbIds               = useRef<DbIds>({ people: new Map(), themes: new Map(), events: new Map(), relations: new Set() })
+  const personSummariesRef  = useRef<Map<string, string | null>>(new Map())  // uuid → ai_summary
+  const themeSummariesRef   = useRef<Map<string, string | null>>(new Map())  // name → ai_summary
+  const userMemoryRef       = useRef<UserMemory | null>(null)
+  const existingContextRef  = useRef<string | undefined>(undefined)
   const msgsRef           = useRef<HTMLDivElement>(null)
   const inputRef          = useRef<HTMLInputElement>(null)
 
@@ -309,6 +321,20 @@ export default function OnboardingPage() {
       )
     }
 
+    // Nouveaux thèmes standalone
+    const newThemes = next.themeNames.filter(n => !ids.themes.has(n.toLowerCase()))
+    for (const name of newThemes) {
+      saves2.push(
+        fetch('/api/onboarding/save-item', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type: 'theme', name }),
+        })
+          .then(r => r.json())
+          .then(data => { if (data.id) ids.themes.set(name.toLowerCase(), data.id) })
+      )
+    }
+
     // Nouveaux événements
     const newEvents = next.events.filter(e => !ids.events.has(`${e.year}:${e.title}`))
     for (const ev of newEvents) {
@@ -376,6 +402,7 @@ export default function OnboardingPage() {
             birthYear:        data.birthYear   ?? 1960,
             keyPlaces:        [],
             dominantEmotions: [],
+            themeNames:       (data.themes ?? []).map((t: { name: string }) => t.name),
             people: (data.people ?? []).map((p: { name: string; relation: string | null; relation_type: string | null }) => ({
               name:         p.name,
               relation:     p.relation     ?? '',
@@ -404,7 +431,10 @@ export default function OnboardingPage() {
             dbIds.current.people.set(p.name.toLowerCase(), p.id)
             personSummariesRef.current.set(p.id, p.ai_summary ?? null)
           })
-          data.themes.forEach((t: { id: string; name: string }) => dbIds.current.themes.set(t.name, t.id))
+          data.themes.forEach((t: { id: string; name: string; ai_summary?: string | null }) => {
+            dbIds.current.themes.set(t.name, t.id)
+            themeSummariesRef.current.set(t.name, t.ai_summary ?? null)
+          })
           data.events.forEach((e: { id: string; year: number; title: string }) => dbIds.current.events.set(`${e.year}:${e.title}`, e.id))
           data.relations.forEach((r: { person_a_id: string; person_b_id: string }) => dbIds.current.relations.add(`${r.person_a_id}:${r.person_b_id}`))
 
@@ -450,6 +480,7 @@ export default function OnboardingPage() {
         birthYear:        data.birthYear   ?? 1960,
         keyPlaces:        [],
         dominantEmotions: [],
+        themeNames:       (data.themes ?? []).map((t: { name: string }) => t.name),
         people: (data.people ?? []).map((p: { name: string; relation: string | null; relation_type: string | null }) => ({
           name:         p.name,
           relation:     p.relation     ?? '',
@@ -478,12 +509,16 @@ export default function OnboardingPage() {
       dbIds.current.events.clear()
       dbIds.current.relations = new Set()
       personSummariesRef.current.clear()
+      themeSummariesRef.current.clear()
 
       data.people.forEach((p: { id: string; name: string; ai_summary?: string | null }) => {
         dbIds.current.people.set(p.name.toLowerCase(), p.id)
         personSummariesRef.current.set(p.id, p.ai_summary ?? null)
       })
-      data.themes.forEach((t: { id: string; name: string }) => dbIds.current.themes.set(t.name, t.id))
+      data.themes.forEach((t: { id: string; name: string; ai_summary?: string | null }) => {
+        dbIds.current.themes.set(t.name, t.id)
+        themeSummariesRef.current.set(t.name, t.ai_summary ?? null)
+      })
       data.events.forEach((e: { id: string; year: number; title: string }) => dbIds.current.events.set(`${e.year}:${e.title}`, e.id))
       data.relations.forEach((r: { person_a_id: string; person_b_id: string }) => dbIds.current.relations.add(`${r.person_a_id}:${r.person_b_id}`))
 
@@ -508,14 +543,15 @@ export default function OnboardingPage() {
     messages:         Array<{ role: 'user' | 'assistant'; content: string }>,
     peopleNames:      string[],
     placeNames:       string[],
+    themeNames:       string[],
     hasProfileUpdate: boolean,
   ) => {
-    if (!hasProfileUpdate && !peopleNames.length && !placeNames.length) return
+    if (!hasProfileUpdate && !peopleNames.length && !placeNames.length && !themeNames.length) return
     try {
       await fetch('/api/onboarding/sync-memory', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ recentMessages: messages, peopleNames, placeNames, hasProfileUpdate }),
+        body:    JSON.stringify({ recentMessages: messages, peopleNames, placeNames, themeNames, hasProfileUpdate }),
       })
     } catch (err) {
       console.error('[syncMemory]', err)
@@ -601,6 +637,7 @@ export default function OnboardingPage() {
           [...msgs, { role: 'assistant' as const, content: buffer }],
           extractedEntities.peopleNames,
           extractedEntities.placeNames,
+          extractedEntities.themeNames,
           extractedEntities.hasProfile,
         )
       }
@@ -835,7 +872,10 @@ export default function OnboardingPage() {
       {showMemory && (
         <MemoryPanel
           portrait={userMemoryRef.current}
-          themes={themes}
+          themes={themes.map(t => ({
+            ...t,
+            ai_summary: themeSummariesRef.current.get(t.name) ?? null,
+          }))}
           userName={state.displayName || 'Moi'}
           onClose={() => setShowMemory(false)}
         />

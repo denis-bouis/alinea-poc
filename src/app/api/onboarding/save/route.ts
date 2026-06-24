@@ -46,7 +46,7 @@ export async function POST(req: NextRequest) {
       birth_year: payload.birthYear,
     }, { onConflict: 'user_id' })
 
-    // 3. Thématiques — trouver les existantes, créer seulement les nouvelles
+    // 3. Thématiques — upsert sur (user_id, name) pour éviter les doublons
     const { data: existingThemes } = await supabase
       .from('themes').select('id, name, color').eq('user_id', userId)
     const themeMap: Record<string, string> = {}
@@ -61,7 +61,9 @@ export async function POST(req: NextRequest) {
         const color = nextThemeColor(existingColors)
         existingColors.push(color)
         const { data } = await supabase
-          .from('themes').insert({ user_id: userId, name, color, maturity: 'emerging' }).select('id').single()
+          .from('themes')
+          .upsert({ user_id: userId, name, color, maturity: 'emerging' }, { onConflict: 'user_id,name' })
+          .select('id').single()
         if (data) themeMap[name] = data.id
       }
     }

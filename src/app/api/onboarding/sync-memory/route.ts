@@ -6,6 +6,7 @@ type SyncRequest = {
   recentMessages:   Array<{ role: 'user' | 'assistant'; content: string }>
   peopleNames:      string[]
   placeNames:       string[]
+  themeNames:       string[]
   hasProfileUpdate: boolean
 }
 
@@ -16,15 +17,15 @@ export async function POST(req: NextRequest) {
 
   const uid  = user.id
   const body = await req.json() as SyncRequest
-  const { recentMessages, peopleNames, placeNames, hasProfileUpdate } = body
+  const { recentMessages, peopleNames, placeNames, themeNames = [], hasProfileUpdate } = body
 
-  if (!hasProfileUpdate && !peopleNames.length && !placeNames.length) {
+  if (!hasProfileUpdate && !peopleNames.length && !placeNames.length && !themeNames.length) {
     return NextResponse.json({ ok: true, skipped: true })
   }
 
   try {
     // Récupérer l'état mémoire actuel des entités concernées
-    const [{ data: memory }, { data: people }] = await Promise.all([
+    const [{ data: memory }, { data: people }, { data: themes }] = await Promise.all([
       supabase.from('user_memory')
         .select('portrait, key_places')
         .eq('user_id', uid)
@@ -35,10 +36,19 @@ export async function POST(req: NextRequest) {
             .eq('user_id', uid)
             .in('name', peopleNames)
         : Promise.resolve({ data: [] as Array<{ id: string; name: string; ai_summary: string | null }> }),
+      themeNames.length
+        ? supabase.from('themes')
+            .select('id, name, ai_summary')
+            .eq('user_id', uid)
+        : Promise.resolve({ data: [] as Array<{ id: string; name: string; ai_summary: string | null }> }),
     ])
 
     const currentPortrait = memory?.portrait ?? null
     const keyPlaces = (memory?.key_places as Array<{ name: string; role: string; notes?: string }> | null) ?? []
+
+    // Filtrer les thèmes mentionnés (case-insensitive)
+    const lowerThemeNames = themeNames.map(n => n.toLowerCase())
+    const matchedThemes = (themes ?? []).filter(t => lowerThemeNames.includes(t.name.toLowerCase()))
 
     // Construire l'extrait de conversation (8 derniers messages, blocs extraits retirés)
     const excerpt = recentMessages.slice(-8).map(m => {
@@ -57,12 +67,19 @@ export async function POST(req: NextRequest) {
       return `- ${name} : ${current}`
     }).join('\n')
 
+    const themesBlock = matchedThemes.map(t =>
+      `- ${t.name} : ${t.ai_summary ?? 'vide'}`
+    ).join('\n')
+
     // Exemples de noms pour le JSON template
     const peoplePlaceholder = peopleNames.length
       ? Object.fromEntries(peopleNames.map(n => [n, '...']))
       : {}
     const placesPlaceholder = placeNames.length
       ? Object.fromEntries(placeNames.map(n => [n, '...']))
+      : {}
+    const themesPlaceholder = matchedThemes.length
+      ? Object.fromEntries(matchedThemes.map(t => [t.name, '...']))
       : {}
 
     const anthropic = new Anthropic()
@@ -80,15 +97,17 @@ ${excerpt}
 Portrait : ${currentPortrait ?? 'vide'}
 ${peopleBlock ? `\nPersonnes :\n${peopleBlock}` : ''}
 ${placesBlock ? `\nLieux :\n${placesBlock}` : ''}
+${themesBlock ? `\nThématiques :\n${themesBlock}` : ''}
 
 ## Consignes
 - Portrait (3ème personne, 2–3 phrases) : qui est cette personne, d'où vient-elle, ce qui compte pour elle. Intègre les nouvelles informations sans effacer les anciennes. Retourne null si l'échange n'apporte rien de nouveau.
-- Personnes (1–3 phrases) : ce que cette personne représente POUR l'utilisateur — rôle, lien affectif, anecdote significative. Intègre les nuances exprimées. Retourne null si rien de nouveau.
+- Personnes (1–3 phrases) : ce que cette personne représente POUR l'utilisateur — rôle, lien affectif, anecdote significative. Retourne null si rien de nouveau.
 - Lieux (1–2 phrases) : ce que ce lieu évoque, ce qu'il signifie dans la vie de l'utilisateur. Retourne null si rien de nouveau.
+- Thématiques (1–3 phrases) : ce que ce chapitre de vie a représenté — tonalité, enjeux, ce qu'il révèle du parcours. Si le résumé actuel est "vide", génère toujours une description initiale à partir du nom du chapitre et du contexte, même minimal. Retourne null uniquement si un résumé existe déjà et que l'échange n'apporte rien de nouveau.
 - Ne génère une mise à jour QUE si l'échange apporte une information nouvelle ou affine ce qui existe.
 
 Réponds UNIQUEMENT avec ce JSON, sans balise, sans prose :
-${JSON.stringify({ portrait: '...ou null', people: peoplePlaceholder, places: placesPlaceholder }, null, 2)}`,
+${JSON.stringify({ portrait: '...ou null', people: peoplePlaceholder, places: placesPlaceholder, themes: themesPlaceholder }, null, 2)}`,
       }],
     })
 
@@ -99,6 +118,7 @@ ${JSON.stringify({ portrait: '...ou null', people: peoplePlaceholder, places: pl
       portrait?: string | null
       people?:   Record<string, string | null>
       places?:   Record<string, string | null>
+      themes?:   Record<string, string | null>
     }
     try {
       const cleaned = raw.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '')
@@ -126,6 +146,18 @@ ${JSON.stringify({ portrait: '...ou null', people: peoplePlaceholder, places: pl
         if (person?.id) {
           saves.push(
             supabase.from('people').update({ ai_summary: summary }).eq('id', person.id).then(() => {})
+          )
+        }
+      }
+    }
+
+    if (updates.themes) {
+      for (const [name, summary] of Object.entries(updates.themes)) {
+        if (!summary) continue
+        const theme = matchedThemes.find(t => t.name.toLowerCase() === name.toLowerCase())
+        if (theme?.id) {
+          saves.push(
+            supabase.from('themes').update({ ai_summary: summary }).eq('id', theme.id).then(() => {})
           )
         }
       }

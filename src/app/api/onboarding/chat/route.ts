@@ -75,6 +75,11 @@ Relation entre deux personnes :
 {"type":"relation","aName":"Manon","bName":"Yuna","label":"mère de"}
 \`\`\`
 
+Thématique de vie (grande période ou chapitre — étape 2 principalement) :
+\`\`\`onboarding-extract
+{"type":"theme","name":"Vie de couple et famille"}
+\`\`\`
+
 Événement de frise :
 \`\`\`onboarding-extract
 {"type":"event","year":1988,"title":"Premier poste en informatique","themeNames":["L'IT"],"isPivot":false,"emotionalIntensity":2}
@@ -92,7 +97,8 @@ Lieu marquant :
 
 Règles d'extraction :
 - relationType est l'un de : famille | amitié | professionnel | romantique | autre
-- themeNames : 1 à 3 thématiques courtes — réutilise TOUJOURS le libellé exact d'une thématique déjà émise. Ne crée jamais deux variantes ("La famille" et "Famille" sont des doublons).
+- Émets un bloc {"type":"theme"} pour chaque grande période ou chapitre de vie mentionné à l'étape 2 — une thématique par bloc.
+- themeNames dans les événements : réutilise TOUJOURS le libellé exact d'une thématique déjà émise via {"type":"theme"}. Ne crée jamais deux variantes ("La famille" et "Famille" sont des doublons).
 - isPivot = true pour les moments qui ont changé quelque chose (étape 6 principalement)
 - emotionalIntensity : 0 (neutre) à 3 (très intense) — estime selon le vécu exprimé
 - N'extrais que ce que l'utilisateur a explicitement dit. Ne jamais inventer.

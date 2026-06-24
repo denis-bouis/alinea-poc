@@ -176,6 +176,64 @@ export default function FriseSVG({ themes, events, birthYear, onEventClick }: Pr
           .attr('stroke', '#CECECE').attr('stroke-width', 1.5).attr('stroke-dasharray', '2,3')
       })
 
+    // Tooltip partagé (hors clip pour rester visible en bordure)
+    const tipG = sel.append('g').attr('pointer-events', 'none').style('display', 'none')
+    const tipRect = tipG.append('rect')
+      .attr('rx', 5).attr('fill', 'white')
+      .attr('stroke', '#E6DAC8').attr('stroke-width', 1)
+      .style('filter', 'drop-shadow(0 1px 4px rgba(0,0,0,0.12))')
+    const tipLinesG = tipG.append('g')
+
+    // Positions de tous les événements pour le regroupement par proximité
+    const evPositions: { ev: LifeEvent; cx: number; cy: number }[] = []
+    themes.forEach((theme, i) => {
+      const bY = FM.top + i * (BAND_H + BAND_GAP)
+      events.filter(ev => (ev.theme_ids ?? []).includes(theme.id)).forEach(ev => {
+        evPositions.push({ ev, cx: yearX(ev.year), cy: bY + BAND_H / 2 })
+      })
+    })
+
+    const CLUSTER_R = EVENT_R * 2 + 4 // seuil de regroupement en px
+
+    function showTip(hoveredCx: number, hoveredCy: number) {
+      const PAD_X = 8, PAD_Y = 6, LINE_H = 16
+      const seen = new Set<string>()
+      const titles = evPositions
+        .filter(p => Math.abs(p.cx - hoveredCx) <= CLUSTER_R)
+        .filter(p => { if (seen.has(p.ev.id)) return false; seen.add(p.ev.id); return true })
+        .map(p => p.ev.title)
+
+      // Rendre visible avant getBBox() — sinon les dimensions retournent 0
+      tipG.style('display', null)
+      tipLinesG.selectAll('*').remove()
+      titles.forEach(title => {
+        tipLinesG.append('text')
+          .attr('font-size', '11px').attr('font-family', 'inherit')
+          .attr('fill', '#3D2B1A').attr('font-weight', '500')
+          .text(`· ${title}`)
+      })
+
+      const textEls = tipLinesG.selectAll<SVGTextElement, unknown>('text').nodes()
+      let maxW = 0
+      textEls.forEach(el => { maxW = Math.max(maxW, el.getBBox().width) })
+
+      const tw = Math.max(maxW + PAD_X * 2, 60)
+      const th = titles.length * LINE_H + PAD_Y * 2
+      const W  = svgEl?.clientWidth || 800
+      const rx = Math.min(Math.max(hoveredCx - tw / 2, FM.left + 2), W - FM.right - tw - 2)
+
+      // Bascule en dessous si le tooltip sortirait en haut du SVG
+      const ryAbove = hoveredCy - EVENT_R - th - 6
+      const ry = ryAbove >= FM.top ? ryAbove : hoveredCy + EVENT_R + 6
+
+      tipRect.attr('x', rx).attr('y', ry).attr('width', tw).attr('height', th)
+      textEls.forEach((el, idx) => {
+        d3.select(el).attr('x', rx + PAD_X).attr('y', ry + PAD_Y + (idx + 1) * LINE_H - 3)
+      })
+    }
+
+    function hideTip() { tipG.style('display', 'none') }
+
     // Événements
     themes.forEach((theme, i) => {
       const bY = FM.top + i * (BAND_H + BAND_GAP)
@@ -185,13 +243,13 @@ export default function FriseSVG({ themes, events, birthYear, onEventClick }: Pr
         const preBirth = ev.year < birthYear
         const status   = ev.status
         const fillOpacity = status === 'draft' ? 0.55 : status === 'validated' ? 1 : 0
-        const labelY   = i % 2 === 0 ? cy - 14 : cy + 21
         const eG = zoomG.append('g')
           .style('cursor', 'pointer')
           .on('click', () => onEventClick?.(ev))
+          .on('mouseenter', () => showTip(cx, cy))
+          .on('mouseleave', hideTip)
 
         if (preBirth) {
-          // Losange
           const pts = `${cx},${cy - EVENT_R} ${cx + EVENT_R},${cy} ${cx},${cy + EVENT_R} ${cx - EVENT_R},${cy}`
           eG.append('polygon').attr('points', pts)
             .attr('fill', theme.color).attr('fill-opacity', fillOpacity)
@@ -204,7 +262,6 @@ export default function FriseSVG({ themes, events, birthYear, onEventClick }: Pr
               .attr('stroke-width', 1.5).attr('opacity', 0.45)
           }
         } else {
-          // Cercle
           eG.append('circle')
             .attr('cx', cx).attr('cy', cy).attr('r', EVENT_R)
             .attr('fill', theme.color).attr('fill-opacity', fillOpacity)
@@ -216,12 +273,6 @@ export default function FriseSVG({ themes, events, birthYear, onEventClick }: Pr
               .attr('stroke-width', 1.5).attr('opacity', 0.45)
           }
         }
-
-        eG.append('text')
-          .attr('x', cx).attr('y', labelY).attr('text-anchor', 'middle')
-          .attr('font-size', '9px').attr('font-family', 'inherit')
-          .attr('fill', preBirth ? '#8E8E93' : '#1C1C1E').attr('font-weight', '500')
-          .text(ev.title.length > 20 ? ev.title.slice(0, 19) + '…' : ev.title)
       })
     })
   }
