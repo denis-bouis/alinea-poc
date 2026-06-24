@@ -15,6 +15,9 @@ import type { Theme, LifeEvent, Person, PersonRelation, UserMemory } from '@/typ
 
 const FriseSVG       = dynamic(() => import('@/components/FriseSVG'),       { ssr: false })
 const RelationsGraph = dynamic(() => import('@/components/RelationsGraph'),  { ssr: false })
+const FamilyTree     = dynamic(() => import('@/components/FamilyTree'),      { ssr: false })
+
+type ToileView = 'relations' | 'famille'
 
 type MobileView = 'chat' | 'frise' | 'personnes' | 'themes'
 
@@ -39,6 +42,9 @@ export default function TableauClient({ userName, themes, events, people, relati
   const [selectedEvent,  setSelectedEvent]   = useState<LifeEvent | null>(null)
   const [selectedTheme,  setSelectedTheme]   = useState<Theme | null>(null)
   const [selectedPerson, setSelectedPerson]  = useState<Person | null>(null)
+  const [toileView,       setToileView]       = useState<ToileView>('relations')
+  const [toileCollapsed,  setToileCollapsed]  = useState(false)
+  const [toileFullscreen, setToileFullscreen] = useState(false)
   const [chatContext,    setChatContext]      = useState<ChatContext | null>(null)
   const [chatContextKey, setChatContextKey]  = useState('free-0')
   const [lastAiMessage,  setLastAiMessage]   = useState('')
@@ -189,32 +195,86 @@ export default function TableauClient({ userName, themes, events, people, relati
           />
         </div>
 
-        {/* ── Toile des relations ─────────────────────────────────────────── */}
+        {/* ── Toile / Arbre ───────────────────────────────────────────────── */}
         {!graphHidden && (
           <div className={[
-            'flex flex-col flex-shrink-0',
+            'flex flex-col flex-shrink-0 border-l border-[#E6DAC8]',
             mobileView === 'personnes' ? 'flex flex-col flex-1 w-full' : 'hidden md:flex md:w-[280px]',
           ].join(' ')}>
-            <div className="flex items-center justify-between px-4 h-9 border-b border-[#E6DAC8] flex-shrink-0">
-              <span className="text-[10px] font-bold tracking-widest uppercase text-[#8C7565]">
-                Ma toile
-              </span>
-              <button
-                onClick={() => setGraphHidden(true)}
-                className="hidden md:block text-[11px] text-[#8C7565] hover:text-[#3D2B1A] transition-colors"
-              >
-                × masquer
-              </button>
+
+            {/* Header */}
+            <div className="flex items-center gap-1 px-3 h-9 border-b border-[#E6DAC8] flex-shrink-0">
+              {/* Vue toggle */}
+              <div className="flex items-center gap-0.5 bg-[#FAF6F0] rounded-lg p-0.5">
+                <button
+                  onClick={() => setToileView('relations')}
+                  title="Toile des relations"
+                  className={[
+                    'text-[10px] px-2 py-0.5 rounded-md transition-colors',
+                    toileView === 'relations'
+                      ? 'bg-white text-[#3D2B1A] shadow-sm font-semibold'
+                      : 'text-[#8C7565] hover:text-[#3D2B1A]',
+                  ].join(' ')}
+                >
+                  Toile
+                </button>
+                <button
+                  onClick={() => setToileView('famille')}
+                  title="Arbre généalogique"
+                  className={[
+                    'text-[10px] px-2 py-0.5 rounded-md transition-colors',
+                    toileView === 'famille'
+                      ? 'bg-white text-[#3D2B1A] shadow-sm font-semibold'
+                      : 'text-[#8C7565] hover:text-[#3D2B1A]',
+                  ].join(' ')}
+                >
+                  Famille
+                </button>
+              </div>
+
+              {/* Expand + Collapse */}
+              <div className="ml-auto hidden md:flex items-center gap-1">
+                <button
+                  onClick={() => setToileFullscreen(true)}
+                  title="Plein écran"
+                  className="text-[#8C7565] hover:text-[#3D2B1A] transition-colors"
+                >
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                    <path d="M1 4.5V1.5h3M7.5 1.5h3v3M11 7.5v3h-3M4.5 10.5h-3v-3"/>
+                  </svg>
+                </button>
+                <button
+                  onClick={() => setToileCollapsed(v => !v)}
+                  title={toileCollapsed ? 'Déplier' : 'Replier'}
+                  className="text-[11px] text-[#8C7565] hover:text-[#3D2B1A] transition-colors"
+                >
+                  {toileCollapsed ? '▸' : '▾'}
+                </button>
+              </div>
             </div>
-            <div className="flex-1 min-h-0">
-              <RelationsGraph
-                people={people}
-                relations={relations}
-                userName={userName}
-                onPersonClick={p => setSelectedPerson(p)}
-                onUserClick={() => setShowMemory(true)}
-              />
-            </div>
+
+            {/* Corps */}
+            {!toileCollapsed && (
+              <div className="flex-1 min-h-0">
+                {toileView === 'relations' ? (
+                  <RelationsGraph
+                    people={people}
+                    relations={relations}
+                    userName={userName}
+                    onPersonClick={p => setSelectedPerson(p)}
+                    onUserClick={() => setShowMemory(true)}
+                  />
+                ) : (
+                  <FamilyTree
+                    people={people}
+                    relations={relations}
+                    userName={userName}
+                    onPersonClick={p => setSelectedPerson(p)}
+                    onUserClick={() => setShowMemory(true)}
+                  />
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -282,6 +342,64 @@ export default function TableauClient({ userName, themes, events, people, relati
           onStartChat={() => startChatWithTheme(selectedTheme)}
           onClose={() => setSelectedTheme(null)}
         />
+      )}
+
+      {/* ── Toile / Arbre plein écran ─────────────────────────────────── */}
+      {toileFullscreen && (
+        <div className="fixed inset-0 z-50 bg-[#FAF6F0] flex flex-col">
+          <div className="flex items-center gap-1 px-4 h-10 border-b border-[#E6DAC8] bg-white flex-shrink-0">
+            <div className="flex items-center gap-0.5 bg-[#FAF6F0] rounded-lg p-0.5">
+              <button
+                onClick={() => setToileView('relations')}
+                className={[
+                  'text-[10px] px-2 py-0.5 rounded-md transition-colors',
+                  toileView === 'relations'
+                    ? 'bg-white text-[#3D2B1A] shadow-sm font-semibold'
+                    : 'text-[#8C7565] hover:text-[#3D2B1A]',
+                ].join(' ')}
+              >
+                Toile
+              </button>
+              <button
+                onClick={() => setToileView('famille')}
+                className={[
+                  'text-[10px] px-2 py-0.5 rounded-md transition-colors',
+                  toileView === 'famille'
+                    ? 'bg-white text-[#3D2B1A] shadow-sm font-semibold'
+                    : 'text-[#8C7565] hover:text-[#3D2B1A]',
+                ].join(' ')}
+              >
+                Famille
+              </button>
+            </div>
+            <button
+              onClick={() => setToileFullscreen(false)}
+              title="Quitter le plein écran"
+              className="ml-auto text-[13px] text-[#8C7565] hover:text-[#3D2B1A] transition-colors"
+            >
+              ✕
+            </button>
+          </div>
+          <div className="flex-1 min-h-0">
+            {toileView === 'relations' ? (
+              <RelationsGraph
+                people={people}
+                relations={relations}
+                userName={userName}
+                onPersonClick={p => setSelectedPerson(p)}
+                onUserClick={() => setShowMemory(true)}
+              />
+            ) : (
+              <FamilyTree
+                people={people}
+                relations={relations}
+                userName={userName}
+                onPersonClick={p => setSelectedPerson(p)}
+                onUserClick={() => setShowMemory(true)}
+              />
+            )}
+          </div>
+        </div>
       )}
     </div>
   )

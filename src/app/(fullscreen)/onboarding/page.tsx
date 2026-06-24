@@ -10,7 +10,10 @@ import type { Theme, LifeEvent, Person, PersonRelation, UserMemory } from '@/typ
 import { nextThemeColor } from '@/types/domain'
 
 const RelationsGraph = dynamic(() => import('@/components/RelationsGraph'), { ssr: false })
+const FamilyTree     = dynamic(() => import('@/components/FamilyTree'),     { ssr: false })
 const FriseSVG       = dynamic(() => import('@/components/FriseSVG'),       { ssr: false })
+
+type ToileView = 'relations' | 'famille'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -241,6 +244,9 @@ export default function OnboardingPage() {
   const [hiddenThemeIds,   setHiddenThemeIds]    = useState<Set<string>>(new Set())
   const [selectedPerson,   setSelectedPerson]    = useState<Person | null>(null)
   const [showMemory,       setShowMemory]         = useState(false)
+  const [toileView,        setToileView]          = useState<ToileView>('relations')
+  const [toileCollapsed,   setToileCollapsed]     = useState(false)
+  const [toileFullscreen,  setToileFullscreen]    = useState(false)
 
   const stateRef            = useRef<OnboardingState>(INIT)
   const dbIds               = useRef<DbIds>({ people: new Map(), themes: new Map(), events: new Map(), relations: new Set() })
@@ -851,18 +857,74 @@ export default function OnboardingPage() {
             'flex flex-col flex-1 min-h-0',
             mobileView === 'themes' ? 'hidden md:flex' : 'flex',
           ].join(' ')}>
-            <p className="text-[10px] font-bold tracking-widest uppercase text-[#8C7565] px-4 pt-3 pb-0 flex-shrink-0">
-              {phase === 1 ? 'Tes proches' : 'Ta toile'}
-            </p>
-            <div className="flex-1">
-              <RelationsGraph
-                people={people}
-                relations={relations}
-                userName={state.displayName || 'Moi'}
-                onPersonClick={handlePersonClick}
-                onUserClick={() => setShowMemory(true)}
-              />
+
+            {/* Header card */}
+            <div className="flex items-center gap-1 px-3 h-9 border-b border-[#E6DAC8] flex-shrink-0">
+              <div className="flex items-center gap-0.5 bg-[#FAF6F0] rounded-lg p-0.5">
+                <button
+                  onClick={() => setToileView('relations')}
+                  className={[
+                    'text-[10px] px-2 py-0.5 rounded-md transition-colors',
+                    toileView === 'relations'
+                      ? 'bg-white text-[#3D2B1A] shadow-sm font-semibold'
+                      : 'text-[#8C7565] hover:text-[#3D2B1A]',
+                  ].join(' ')}
+                >
+                  {phase === 1 ? 'Proches' : 'Toile'}
+                </button>
+                <button
+                  onClick={() => setToileView('famille')}
+                  className={[
+                    'text-[10px] px-2 py-0.5 rounded-md transition-colors',
+                    toileView === 'famille'
+                      ? 'bg-white text-[#3D2B1A] shadow-sm font-semibold'
+                      : 'text-[#8C7565] hover:text-[#3D2B1A]',
+                  ].join(' ')}
+                >
+                  Famille
+                </button>
+              </div>
+              <div className="ml-auto hidden md:flex items-center gap-1">
+                <button
+                  onClick={() => setToileFullscreen(true)}
+                  title="Plein écran"
+                  className="text-[#8C7565] hover:text-[#3D2B1A] transition-colors"
+                >
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                    <path d="M1 4.5V1.5h3M7.5 1.5h3v3M11 7.5v3h-3M4.5 10.5h-3v-3"/>
+                  </svg>
+                </button>
+                <button
+                  onClick={() => setToileCollapsed(v => !v)}
+                  className="text-[11px] text-[#8C7565] hover:text-[#3D2B1A] transition-colors"
+                >
+                  {toileCollapsed ? '▸' : '▾'}
+                </button>
+              </div>
             </div>
+
+            {/* Corps */}
+            {!toileCollapsed && (
+              <div className="flex-1 min-h-0">
+                {toileView === 'relations' ? (
+                  <RelationsGraph
+                    people={people}
+                    relations={relations}
+                    userName={state.displayName || 'Moi'}
+                    onPersonClick={handlePersonClick}
+                    onUserClick={() => setShowMemory(true)}
+                  />
+                ) : (
+                  <FamilyTree
+                    people={people}
+                    relations={relations}
+                    userName={state.displayName || 'Moi'}
+                    onPersonClick={handlePersonClick}
+                    onUserClick={() => setShowMemory(true)}
+                  />
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -891,6 +953,64 @@ export default function OnboardingPage() {
           onClose={() => setSelectedPerson(null)}
           onSaved={refreshFromDb}
         />
+      )}
+
+      {/* ── Toile / Arbre plein écran ─────────────────────────────────── */}
+      {toileFullscreen && (
+        <div className="fixed inset-0 z-50 bg-[#FAF6F0] flex flex-col">
+          <div className="flex items-center gap-1 px-4 h-10 border-b border-[#E6DAC8] bg-white flex-shrink-0">
+            <div className="flex items-center gap-0.5 bg-[#FAF6F0] rounded-lg p-0.5">
+              <button
+                onClick={() => setToileView('relations')}
+                className={[
+                  'text-[10px] px-2 py-0.5 rounded-md transition-colors',
+                  toileView === 'relations'
+                    ? 'bg-white text-[#3D2B1A] shadow-sm font-semibold'
+                    : 'text-[#8C7565] hover:text-[#3D2B1A]',
+                ].join(' ')}
+              >
+                {phase === 1 ? 'Proches' : 'Toile'}
+              </button>
+              <button
+                onClick={() => setToileView('famille')}
+                className={[
+                  'text-[10px] px-2 py-0.5 rounded-md transition-colors',
+                  toileView === 'famille'
+                    ? 'bg-white text-[#3D2B1A] shadow-sm font-semibold'
+                    : 'text-[#8C7565] hover:text-[#3D2B1A]',
+                ].join(' ')}
+              >
+                Famille
+              </button>
+            </div>
+            <button
+              onClick={() => setToileFullscreen(false)}
+              title="Quitter le plein écran"
+              className="ml-auto text-[13px] text-[#8C7565] hover:text-[#3D2B1A] transition-colors"
+            >
+              ✕
+            </button>
+          </div>
+          <div className="flex-1 min-h-0">
+            {toileView === 'relations' ? (
+              <RelationsGraph
+                people={people}
+                relations={relations}
+                userName={state.displayName || 'Moi'}
+                onPersonClick={handlePersonClick}
+                onUserClick={() => setShowMemory(true)}
+              />
+            ) : (
+              <FamilyTree
+                people={people}
+                relations={relations}
+                userName={state.displayName || 'Moi'}
+                onPersonClick={handlePersonClick}
+                onUserClick={() => setShowMemory(true)}
+              />
+            )}
+          </div>
+        </div>
       )}
     </div>
   )
