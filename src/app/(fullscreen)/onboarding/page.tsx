@@ -175,7 +175,13 @@ function buildRelations(state: OnboardingState, people: Person[]): PersonRelatio
       id: `r-${i}`, user_id: '',
       person_a_id: people.find(p => p.name === r.aName)?.id ?? '',
       person_b_id: people.find(p => p.name === r.bName)?.id ?? '',
-      relation_label: r.label, confirmed: true, declared_in: 'dialogue' as const, created_at: '',
+      relation_type: 'friend_of' as const,
+      is_symmetric: true,
+      qualifier: r.label || null,
+      family_unit_id: null,
+      confirmed: true,
+      declared_in: 'dialogue' as const,
+      created_at: '',
     }))
     .filter(r => r.person_a_id !== '' && r.person_b_id !== '')
 }

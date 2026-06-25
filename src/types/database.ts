@@ -133,10 +133,30 @@ type PersonRelationRow = {
   user_id: string
   person_a_id: string
   person_b_id: string
-  relation_label: string | null
+  relation_type: string
+  is_symmetric: boolean
+  qualifier: string | null
+  family_unit_id: string | null
   confirmed: boolean
-  declared_in: 'dialogue' | 'manual'
+  declared_in: 'dialogue' | 'manual' | 'onboarding'
   created_at: string
+}
+
+type FamilyUnitRow = {
+  id: string
+  user_id: string
+  parent_1_id: string | null
+  parent_2_id: string | null
+  union_type: 'married' | 'civil_union' | 'cohabiting' | 'unknown'
+  union_year: number | null
+  separation_year: number | null
+  created_at: string
+}
+
+type FamilyUnitChildRow = {
+  unit_id: string
+  child_id: string
+  link_type: 'biological' | 'adoptive'
 }
 
 type LifeEventPeopleRow = {
@@ -157,7 +177,8 @@ type AiProfileView = {
   portrait: string | null
   narrative_style: string | null
   themes_summary: Array<{ name: string; maturity: string }> | null
-  people_summary: Array<{ name: string; relation: string | null; relation_type: string | null }> | null
+  people_summary: Array<{ name: string; relation: string | null; relation_type: string | null; alinea_count: number; is_deceased: boolean }> | null
+  relations_summary: Array<{ from: string; to: string; type: string }> | null
 }
 
 export type Database = {
@@ -255,8 +276,39 @@ export type Database = {
       }
       people_relations: {
         Row: PersonRelationRow
-        Insert: { user_id: string; person_a_id: string; person_b_id: string; id?: string; relation_label?: string | null; confirmed?: boolean; declared_in?: string }
+        Insert: {
+          user_id: string
+          person_a_id: string
+          person_b_id: string
+          relation_type: string
+          id?: string
+          is_symmetric?: boolean
+          qualifier?: string | null
+          family_unit_id?: string | null
+          confirmed?: boolean
+          declared_in?: string
+        }
         Update: Partial<Omit<PersonRelationRow, 'id' | 'user_id' | 'created_at'>>
+        Relationships: []
+      }
+      family_units: {
+        Row: FamilyUnitRow
+        Insert: {
+          user_id: string
+          id?: string
+          parent_1_id?: string | null
+          parent_2_id?: string | null
+          union_type?: 'married' | 'civil_union' | 'cohabiting' | 'unknown'
+          union_year?: number | null
+          separation_year?: number | null
+        }
+        Update: Partial<Omit<FamilyUnitRow, 'id' | 'user_id' | 'created_at'>>
+        Relationships: []
+      }
+      family_unit_children: {
+        Row: FamilyUnitChildRow
+        Insert: FamilyUnitChildRow
+        Update: Partial<FamilyUnitChildRow>
         Relationships: []
       }
       life_event_people: {

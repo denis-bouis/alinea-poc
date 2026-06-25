@@ -24,20 +24,20 @@ export async function POST(req: NextRequest) {
       .select('*').eq('user_id', uid).eq('person_b_id', deleteId)
 
     // 2. Recréer ces relations avec keepId (ignorance des doublons)
-    const toUpsert: Array<{ user_id: string; person_a_id: string; person_b_id: string; relation_label: string | null; confirmed: boolean; declared_in: string }> = []
+    const toUpsert: Array<{ user_id: string; person_a_id: string; person_b_id: string; relation_type: string; is_symmetric: boolean; qualifier: string | null; family_unit_id: string | null; confirmed: boolean; declared_in: string }> = []
 
     for (const r of (relationsA ?? [])) {
       const newA = r.person_a_id === deleteId ? keepId : r.person_a_id
       const newB = r.person_b_id === deleteId ? keepId : r.person_b_id
       if (newA !== newB) { // pas d'auto-relation
-        toUpsert.push({ user_id: uid, person_a_id: newA, person_b_id: newB, relation_label: r.relation_label, confirmed: true, declared_in: 'manual' })
+        toUpsert.push({ user_id: uid, person_a_id: newA, person_b_id: newB, relation_type: r.relation_type, is_symmetric: r.is_symmetric, qualifier: r.qualifier, family_unit_id: r.family_unit_id, confirmed: true, declared_in: 'manual' })
       }
     }
     for (const r of (relationsB ?? [])) {
       const newA = r.person_a_id === deleteId ? keepId : r.person_a_id
       const newB = r.person_b_id === deleteId ? keepId : r.person_b_id
       if (newA !== newB) {
-        toUpsert.push({ user_id: uid, person_a_id: newA, person_b_id: newB, relation_label: r.relation_label, confirmed: true, declared_in: 'manual' })
+        toUpsert.push({ user_id: uid, person_a_id: newA, person_b_id: newB, relation_type: r.relation_type, is_symmetric: r.is_symmetric, qualifier: r.qualifier, family_unit_id: r.family_unit_id, confirmed: true, declared_in: 'manual' })
       }
     }
 

@@ -10,6 +10,8 @@ import MemoryPanel from '@/components/MemoryPanel'
 import EventDrawer from '@/components/EventDrawer'
 import ThemeDetail from '@/components/ThemeDetail'
 import PersonPanel from '@/components/PersonPanel'
+import LinkEditor from '@/components/LinkEditor'
+import FamilyUnitEditor from '@/components/FamilyUnitEditor'
 import ChatPanel, { type ChatContext } from '@/components/ChatPanel'
 import type { Theme, LifeEvent, Person, PersonRelation, UserMemory } from '@/types/domain'
 
@@ -45,6 +47,8 @@ export default function TableauClient({ userName, themes, events, people, relati
   const [toileView,       setToileView]       = useState<ToileView>('relations')
   const [toileCollapsed,  setToileCollapsed]  = useState(false)
   const [toileFullscreen, setToileFullscreen] = useState(false)
+  const [linkEditorOpen,  setLinkEditorOpen]  = useState(false)
+  const [familyEditorOpen, setFamilyEditorOpen] = useState(false)
   const [chatContext,    setChatContext]      = useState<ChatContext | null>(null)
   const [chatContextKey, setChatContextKey]  = useState('free-0')
   const [lastAiMessage,  setLastAiMessage]   = useState('')
@@ -232,6 +236,22 @@ export default function TableauClient({ userName, themes, events, people, relati
                 </button>
               </div>
 
+              {/* Editor buttons */}
+              <button
+                onClick={() => setLinkEditorOpen(true)}
+                title="Déclarer un lien entre deux personnes"
+                className="text-[10px] text-[#8C7565] hover:text-[#9B5E3A] transition-colors px-1.5"
+              >
+                + Lien
+              </button>
+              <button
+                onClick={() => setFamilyEditorOpen(true)}
+                title="Déclarer une cellule familiale"
+                className="text-[10px] text-[#8C7565] hover:text-[#9B5E3A] transition-colors px-1.5"
+              >
+                Famille +
+              </button>
+
               {/* Expand + Collapse */}
               <div className="ml-auto hidden md:flex items-center gap-1">
                 <button
@@ -328,8 +348,10 @@ export default function TableauClient({ userName, themes, events, people, relati
         <PersonPanel
           person={selectedPerson}
           allPeople={people}
+          relations={relations}
           onClose={() => setSelectedPerson(null)}
           onSaved={() => { setSelectedPerson(null); router.refresh() }}
+          onAddLink={() => setLinkEditorOpen(true)}
         />
       )}
 
@@ -341,6 +363,24 @@ export default function TableauClient({ userName, themes, events, people, relati
           onToggleVisibility={() => toggleTheme(selectedTheme.id)}
           onStartChat={() => startChatWithTheme(selectedTheme)}
           onClose={() => setSelectedTheme(null)}
+        />
+      )}
+
+      {/* ── Éditeurs de liens ───────────────────────────────────────── */}
+      {linkEditorOpen && (
+        <LinkEditor
+          people={people}
+          personA={selectedPerson ?? undefined}
+          onClose={() => setLinkEditorOpen(false)}
+          onSaved={() => { setLinkEditorOpen(false); router.refresh() }}
+        />
+      )}
+
+      {familyEditorOpen && (
+        <FamilyUnitEditor
+          people={people}
+          onClose={() => setFamilyEditorOpen(false)}
+          onSaved={() => { setFamilyEditorOpen(false); router.refresh() }}
         />
       )}
 
