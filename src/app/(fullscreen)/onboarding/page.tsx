@@ -6,6 +6,7 @@ import dynamic from 'next/dynamic'
 import MobileNav from '@/components/MobileNav'
 import PersonPanel from '@/components/PersonPanel'
 import MemoryPanel from '@/components/MemoryPanel'
+import LinkEditor from '@/components/LinkEditor'
 import type { Theme, LifeEvent, Person, PersonRelation, UserMemory } from '@/types/domain'
 import { nextThemeColor } from '@/types/domain'
 
@@ -249,6 +250,7 @@ export default function OnboardingPage() {
   const [savingIndicator,  setSavingIndicator]   = useState(false)
   const [hiddenThemeIds,   setHiddenThemeIds]    = useState<Set<string>>(new Set())
   const [selectedPerson,   setSelectedPerson]    = useState<Person | null>(null)
+  const [linkEditorOpen,   setLinkEditorOpen]    = useState(false)
   const [showMemory,       setShowMemory]         = useState(false)
   const [toileView,        setToileView]          = useState<ToileView>('relations')
   const [toileCollapsed,   setToileCollapsed]     = useState(false)
@@ -679,11 +681,22 @@ export default function OnboardingPage() {
   function handlePersonClick(previewPerson: Person) {
     const realId = dbIds.current.people.get(previewPerson.name.toLowerCase())
     if (!realId) return
+    // Afficher immédiatement avec la valeur en cache
     setSelectedPerson({
       ...previewPerson,
       id:         realId,
       ai_summary: personSummariesRef.current.get(realId) ?? null,
     })
+    // Rafraîchir ai_summary depuis la DB (cache potentiellement périmé)
+    fetch(`/api/people/${realId}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (data?.ai_summary !== undefined) {
+          personSummariesRef.current.set(realId, data.ai_summary)
+          setSelectedPerson(prev => prev?.id === realId ? { ...prev, ai_summary: data.ai_summary } : prev)
+        }
+      })
+      .catch(() => {})
   }
 
   function toggleTheme(id: string) {
@@ -958,6 +971,19 @@ export default function OnboardingPage() {
           })).filter(p => p.id !== '')}
           onClose={() => setSelectedPerson(null)}
           onSaved={refreshFromDb}
+          onAddLink={() => setLinkEditorOpen(true)}
+        />
+      )}
+
+      {linkEditorOpen && (
+        <LinkEditor
+          people={people.map(p => ({
+            ...p,
+            id: dbIds.current.people.get(p.name.toLowerCase()) ?? '',
+          })).filter(p => p.id !== '')}
+          personA={selectedPerson ?? undefined}
+          onClose={() => setLinkEditorOpen(false)}
+          onSaved={() => { setLinkEditorOpen(false); refreshFromDb() }}
         />
       )}
 
