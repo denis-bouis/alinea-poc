@@ -1,18 +1,21 @@
 'use client'
 
 import { useState } from 'react'
-import type { Person } from '@/types/domain'
+import type { Person, PersonRelation, PeopleRelationType } from '@/types/domain'
+import { RELATION_TYPE_LABEL } from '@/types/domain'
 
 type Mode = 'view' | 'edit' | 'merge' | 'delete'
 
 type Props = {
   person:     Person
   allPeople:  Person[]
+  relations?: PersonRelation[]
   onClose:    () => void
   onSaved:    () => void
+  onAddLink?: () => void
 }
 
-export default function PersonPanel({ person, allPeople, onClose, onSaved }: Props) {
+export default function PersonPanel({ person, allPeople, relations = [], onClose, onSaved, onAddLink }: Props) {
   const [mode,        setMode]        = useState<Mode>('view')
   const [editName,    setEditName]    = useState(person.name)
   const [editRelation, setEditRelation] = useState(person.relation ?? '')
@@ -32,8 +35,13 @@ export default function PersonPanel({ person, allPeople, onClose, onSaved }: Pro
       body:    JSON.stringify({ name: editName, relation: editRelation }),
     })
     setLoading(false)
-    if (res.ok) { onSaved(); onClose() }
-    else setError('Erreur lors de la sauvegarde.')
+    if (res.ok) {
+      // Fire-and-forget summary refresh
+      fetch(`/api/people/${person.id}/refresh-summary`, { method: 'POST' }).catch(() => {})
+      onSaved(); onClose()
+    } else {
+      setError('Erreur lors de la sauvegarde.')
+    }
   }
 
   async function handleDelete() {
@@ -88,6 +96,37 @@ export default function PersonPanel({ person, allPeople, onClose, onSaved }: Pro
                 </section>
               )}
 
+              {/* Relations section */}
+              <section>
+                <p className="text-[10px] font-bold tracking-widest uppercase text-[#8C7565] mb-2">
+                  Relations déclarées
+                </p>
+                {(() => {
+                  const personRelations = relations.filter(r =>
+                    (r.person_a_id === person.id) &&
+                    (!r.is_symmetric || r.person_a_id < r.person_b_id)
+                  )
+                  if (personRelations.length === 0) {
+                    return <p className="text-[12px] text-[#8C7565] italic">Aucun lien déclaré.</p>
+                  }
+                  return (
+                    <div className="flex flex-col gap-1.5">
+                      {personRelations.map(r => {
+                        const other = allPeople.find(p => p.id === r.person_b_id)
+                        const label = RELATION_TYPE_LABEL[r.relation_type as PeopleRelationType] ?? r.relation_type
+                        return (
+                          <div key={r.id} className="flex items-center gap-2 text-[13px] text-[#3D2B1A]">
+                            <span className="text-[#8C7565]">·</span>
+                            <span>{other?.name ?? r.person_b_id}</span>
+                            <span className="text-[#8C7565] text-[11px]">{label}</span>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )
+                })()}
+              </section>
+
               <div className="flex flex-col gap-2 mt-auto">
                 <button
                   onClick={() => setMode('edit')}
@@ -95,6 +134,14 @@ export default function PersonPanel({ person, allPeople, onClose, onSaved }: Pro
                 >
                   Modifier le nom ou la relation
                 </button>
+                {onAddLink && (
+                  <button
+                    onClick={onAddLink}
+                    className="flex items-center justify-center gap-2 px-4 py-2.5 border border-[#E6DAC8] text-[#3D2B1A] rounded-xl text-[13px] hover:border-[#9B5E3A] transition-colors"
+                  >
+                    Déclarer un lien
+                  </button>
+                )}
                 {others.length > 0 && (
                   <button
                     onClick={() => setMode('merge')}

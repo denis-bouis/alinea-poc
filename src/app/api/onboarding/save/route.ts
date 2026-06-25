@@ -132,7 +132,7 @@ export async function POST(req: NextRequest) {
         if (!existing) {
           await supabase.from('people_relations').insert({
             user_id: userId, person_a_id: aId, person_b_id: bId,
-            relation_label: rel.label, confirmed: true, declared_in: 'dialogue',
+            relation_type: 'friend_of', qualifier: rel.label || null, is_symmetric: true, confirmed: true, declared_in: 'dialogue',
           })
         }
       }

@@ -2,7 +2,8 @@
 
 import { useEffect, useRef } from 'react'
 import * as d3 from 'd3'
-import type { Person, PersonRelation } from '@/types/domain'
+import type { Person, PersonRelation, PeopleRelationType } from '@/types/domain'
+import { RELATION_TYPE_LABEL } from '@/types/domain'
 
 type Props = {
   people: Person[]
@@ -67,7 +68,7 @@ export default function RelationsGraph({ people, relations, userName, onPersonCl
       // Liens utilisateur → chaque personne
       ...people.map(p => ({ source: '__user__', target: p.id, label: p.relation ?? '' })),
       // Liens inter-personnes déclarés
-      ...relations.map(r => ({ source: r.person_a_id, target: r.person_b_id, label: r.relation_label ?? '' })),
+      ...relations.map(r => ({ source: r.person_a_id, target: r.person_b_id, label: RELATION_TYPE_LABEL[r.relation_type as PeopleRelationType] ?? r.relation_type })),
     ]
 
     const linkG = sel.append('g')

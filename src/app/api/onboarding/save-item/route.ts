@@ -57,7 +57,7 @@ export async function POST(request: NextRequest) {
 
         const { data: created } = await supabase
           .from('people_relations')
-          .insert({ user_id: uid, person_a_id: body.aPersonId, person_b_id: body.bPersonId, relation_label: body.label, confirmed: true, declared_in: 'dialogue' })
+          .insert({ user_id: uid, person_a_id: body.aPersonId, person_b_id: body.bPersonId, relation_type: 'friend_of', qualifier: body.label || null, is_symmetric: true, confirmed: true, declared_in: 'dialogue' })
           .select('id').single()
         return NextResponse.json({ type: 'relation', id: created?.id ?? null })
       }
