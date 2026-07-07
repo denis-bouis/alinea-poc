@@ -14,5 +14,5 @@ export default async function RootPage() {
     .eq('id', user.id)
     .single()
 
-  redirect((profile?.onboarding_step ?? 0) >= 10 ? '/tableau' : '/onboarding')
+  redirect('/tableau')
 }

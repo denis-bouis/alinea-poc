@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/client'
 import { parseFrenchDate } from '@/lib/parse-date'
 import type { Theme, LifeEvent } from '@/types/domain'
 import type { EmotionTag, ThematicCategory } from '@/types/database'
+import type { PendingEntity } from '@/app/api/memory/confirm/route'
 
 export type ChatContext =
   | { type: 'event'; event: LifeEvent }
@@ -27,8 +28,21 @@ function parseDraft(text: string): AlineaDraft | null {
   try { return JSON.parse(m[1]) as AlineaDraft } catch { return null }
 }
 
-function stripDraft(text: string): string {
-  return text.replace(/```alinea-draft[\s\S]*?```/, '').trim()
+function parsePending(text: string): { entities: PendingEntity[]; raw: string } | null {
+  const m = text.match(/```memory-pending\n([\s\S]*?)\n```/)
+  if (!m) return null
+  try {
+    const parsed = JSON.parse(m[1])
+    if (!Array.isArray(parsed) || parsed.length === 0) return null
+    return { entities: parsed as PendingEntity[], raw: m[1] }
+  } catch { return null }
+}
+
+function stripSignals(text: string): string {
+  return text
+    .replace(/```alinea-draft[\s\S]*?```/, '')
+    .replace(/```memory-pending[\s\S]*?```/, '')
+    .trim()
 }
 
 function contextToSeed(ctx: ChatContext): string {
@@ -38,28 +52,41 @@ function contextToSeed(ctx: ChatContext): string {
 }
 
 type Props = {
-  context:       ChatContext | null
-  onLastMessage: (msg: string) => void
-  onAlineaSaved: () => void
+  context:        ChatContext | null
+  onboardingStep?: number
+  onLastMessage:  (msg: string) => void
+  onAlineaSaved:  () => void
 }
 
-export default function ChatPanel({ context, onLastMessage, onAlineaSaved }: Props) {
-  const [messages,    setMessages]    = useState<Message[]>([])
-  const [apiMessages, setApiMessages] = useState<ApiMessage[]>([])
-  const [inputVal,    setInputVal]    = useState('')
-  const [streaming,   setStreaming]   = useState(false)
-  const [draft,       setDraft]       = useState<AlineaDraft | null>(null)
-  const [saving,      setSaving]      = useState(false)
-  const [saved,       setSaved]       = useState(false)
+export default function ChatPanel({ context, onboardingStep = 10, onLastMessage, onAlineaSaved }: Props) {
+  const [messages,       setMessages]       = useState<Message[]>([])
+  const [apiMessages,    setApiMessages]    = useState<ApiMessage[]>([])
+  const [inputVal,       setInputVal]       = useState('')
+  const [streaming,      setStreaming]       = useState(false)
+  const [draft,          setDraft]          = useState<AlineaDraft | null>(null)
+  const [saving,         setSaving]         = useState(false)
+  const [saved,          setSaved]          = useState(false)
+  const [accumulated,    setAccumulated]    = useState<PendingEntity[]>([])
+  const [extracting,     setExtracting]     = useState(false)
+  const [aiReady,        setAiReady]        = useState(false)
+  const [savingMemory,   setSavingMemory]   = useState(false)
+  const [memorySaved,    setMemorySaved]    = useState(false)
+  const [memoryError,    setMemoryError]    = useState<string | null>(null)
+  const [debugOpen,      setDebugOpen]      = useState(false)
+  const [panelOpen,      setPanelOpen]      = useState(true)
 
-  const msgsRef  = useRef<HTMLDivElement>(null)
-  const inputRef = useRef<HTMLInputElement>(null)
+  const msgsRef        = useRef<HTMLDivElement>(null)
+  const inputRef       = useRef<HTMLInputElement>(null)
+  const accumulatedRef = useRef<PendingEntity[]>([])
+
+  // Garder le ref synchrone pour éviter les closures périmées dans sendToAI
+  useEffect(() => { accumulatedRef.current = accumulated }, [accumulated])
 
   const scrollDown = useCallback(() => {
     setTimeout(() => msgsRef.current?.scrollTo({ top: msgsRef.current.scrollHeight, behavior: 'smooth' }), 50)
   }, [])
 
-  const sendToAI = useCallback(async (msgs: ApiMessage[]) => {
+  const sendToAI = useCallback(async (msgs: ApiMessage[], opts?: { isSeed?: boolean }) => {
     setStreaming(true)
     let buffer = ''
     setMessages(prev => [...prev, { role: 'ai', text: '' }])
@@ -80,7 +107,7 @@ export default function ChatPanel({ context, onLastMessage, onAlineaSaved }: Pro
         buffer += decoder.decode(value, { stream: true })
         setMessages(prev => {
           const copy = [...prev]
-          copy[copy.length - 1] = { role: 'ai', text: stripDraft(buffer) }
+          copy[copy.length - 1] = { role: 'ai', text: stripSignals(buffer) }
           return copy
         })
         scrollDown()
@@ -89,10 +116,37 @@ export default function ChatPanel({ context, onLastMessage, onAlineaSaved }: Pro
       const foundDraft = parseDraft(buffer)
       if (foundDraft) setDraft(foundDraft)
 
-      const displayText = stripDraft(buffer)
+      const displayText = stripSignals(buffer)
       if (displayText) onLastMessage(displayText)
 
-      setApiMessages(prev => [...prev, { role: 'assistant', content: buffer }])
+      const updatedApiMsgs = [...msgs, { role: 'assistant' as const, content: buffer }]
+      setApiMessages(updatedApiMsgs)
+
+      // Capture progressive — jamais sur le message initial de l'IA (seed),
+      // ni sur un brouillon d'alinéa. On accumule et affine au fil des échanges.
+      if (!foundDraft && !opts?.isSeed) {
+        const lastUserMsg = msgs[msgs.length - 1]?.content ?? ''
+        setExtracting(true)
+        fetch('/api/memory/extract', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({
+            accumulated:     accumulatedRef.current,
+            lastUserMessage: lastUserMsg,
+            lastAiMessage:   displayText,
+          }),
+        })
+          .then(r => r.json())
+          .then(({ entities, ready }: { entities: PendingEntity[]; ready: boolean }) => {
+            if (Array.isArray(entities)) {
+              setAccumulated(entities)
+              if (entities.length > 0) setMemorySaved(false)
+            }
+            setAiReady(Boolean(ready))
+          })
+          .catch(() => {/* silencieux */})
+          .finally(() => setExtracting(false))
+      }
     } finally {
       setStreaming(false)
       setTimeout(() => inputRef.current?.focus(), 100)
@@ -101,8 +155,15 @@ export default function ChatPanel({ context, onLastMessage, onAlineaSaved }: Pro
 
   // Démarrage de la conversation au montage du composant
   useEffect(() => {
-    const seed = context ? contextToSeed(context) : 'Commence'
-    sendToAI([{ role: 'user', content: seed }])
+    let seed: string
+    if (onboardingStep < 4) {
+      seed = '__onboarding_mode1__'
+    } else if (context) {
+      seed = contextToSeed(context)
+    } else {
+      seed = 'Commence'
+    }
+    sendToAI([{ role: 'user', content: seed }], { isSeed: true })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -117,6 +178,29 @@ export default function ChatPanel({ context, onLastMessage, onAlineaSaved }: Pro
     scrollDown()
     await sendToAI(newMsgs)
   }, [inputVal, streaming, saving, apiMessages, sendToAI, scrollDown])
+
+  async function handleSaveMemory() {
+    if (accumulated.length === 0) return
+    setSavingMemory(true)
+    setMemoryError(null)
+    const res = await fetch('/api/memory/confirm', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ entities: accumulated }),
+    })
+    const body = await res.json().catch(() => ({})) as { ok?: boolean; error?: string }
+    setSavingMemory(false)
+    // 207 reste dans la plage 2xx : on s'appuie sur le champ `ok` du corps.
+    if (res.ok && body.ok) {
+      setAccumulated([])
+      setAiReady(false)
+      setMemorySaved(true)
+      setDebugOpen(false)
+      onAlineaSaved() // rafraîchit la grille
+    } else {
+      setMemoryError(body.error ?? 'Échec de la mémorisation.')
+    }
+  }
 
   async function handleSaveDraft() {
     if (!draft) return
@@ -165,6 +249,80 @@ export default function ChatPanel({ context, onLastMessage, onAlineaSaved }: Pro
         </div>
       )}
 
+      {/* Panneau « Ce que je retiens » — en parallèle, mis à jour au fil des échanges */}
+      {accumulated.length > 0 && (
+        <div className="flex-shrink-0 border-b border-[#E8E2D9] bg-[#FAF8F4]">
+          <button
+            onClick={() => setPanelOpen(v => !v)}
+            className="w-full flex items-center justify-between px-4 py-2"
+          >
+            <span className="text-[10px] font-medium tracking-[0.12em] uppercase text-[#8C8278] flex items-center gap-2">
+              Ce que je retiens · {accumulated.length}
+              {extracting && <span className="text-[#C4BDB6] normal-case tracking-normal italic">mise à jour…</span>}
+            </span>
+            <span className="text-[#C4BDB6] text-[11px]">{panelOpen ? '▾' : '▸'}</span>
+          </button>
+
+          {panelOpen && (
+            <div className="px-4 pb-3 flex flex-col gap-2">
+              <ul className="flex flex-col gap-1.5">
+                {accumulated.map((e, i) => (
+                  <li key={i} className="flex items-baseline gap-2 text-[13px] text-[#2C2825]">
+                    <span className="flex-shrink-0">{e.icon}</span>
+                    <span>{e.label}</span>
+                  </li>
+                ))}
+              </ul>
+
+              {aiReady && (
+                <p className="text-[11px] text-[#9B5E3A] italic">
+                  Je crois avoir de quoi mémoriser — quand tu veux.
+                </p>
+              )}
+
+              <div className="flex items-center gap-2 mt-1">
+                <button
+                  onClick={handleSaveMemory}
+                  disabled={savingMemory}
+                  className={[
+                    'px-4 py-2 rounded-xl text-[12px] font-medium transition-opacity hover:opacity-85 disabled:opacity-40',
+                    aiReady ? 'bg-[#9B5E3A] text-white' : 'bg-[#2C2825] text-[#FAF8F4]',
+                  ].join(' ')}
+                >
+                  {savingMemory ? 'Mémorisation…' : 'Mémoriser'}
+                </button>
+                <button
+                  onClick={() => { setAccumulated([]); setAiReady(false) }}
+                  disabled={savingMemory}
+                  className="px-3 py-2 text-[#8C8278] rounded-xl text-[12px] hover:text-[#2C2825] transition-colors"
+                >
+                  Oublier
+                </button>
+                {/* Debug — JSON brut */}
+                <button
+                  onClick={() => setDebugOpen(v => !v)}
+                  className="ml-auto text-[10px] text-[#C4BDB6] hover:text-[#8C8278] transition-colors font-mono"
+                >
+                  {debugOpen ? '▾' : '▸'} JSON
+                </button>
+              </div>
+
+              {memoryError && (
+                <p className="text-[11px] text-[#B0504A] bg-[#F8EDEC] border border-[#E4C4C0] rounded-lg px-3 py-2">
+                  {memoryError}
+                </p>
+              )}
+
+              {debugOpen && (
+                <pre className="text-[10px] leading-relaxed text-[#8C8278] bg-[#F2EDE5] rounded-lg p-2 overflow-x-auto whitespace-pre-wrap break-all font-mono">
+                  {JSON.stringify(accumulated, null, 2)}
+                </pre>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Messages */}
       <div ref={msgsRef} className="flex-1 overflow-y-auto px-4 pt-4 pb-3 flex flex-col gap-2.5">
         {messages.map((m, i) => (
@@ -181,14 +339,21 @@ export default function ChatPanel({ context, onLastMessage, onAlineaSaved }: Pro
           </div>
         ))}
 
+        {memorySaved && (
+          <div className="self-start text-[12px] text-[#4A7A5A] bg-[#EEF4EE] border border-[#C4DCC4] rounded-xl px-4 py-2">
+            Noté ✓
+          </div>
+        )}
+
+        {/* Carte brouillon d'alinéa */}
         {draft && !saved && (
           <div className="self-start max-w-[92%] bg-[#F5F0E8] border border-[#D4C4A8] rounded-2xl p-4 flex flex-col gap-3">
-            <p className="text-[10px] font-bold tracking-widest uppercase text-[#9B5E3A]">Brouillon d&apos;alinéa</p>
-            <p className="text-[13.5px] text-[#3D2B1A] leading-relaxed italic">{draft.content}</p>
+            <p className="text-[10px] font-medium tracking-[0.12em] uppercase text-[#9B5E3A]">Brouillon d&apos;alinéa</p>
+            <p className="text-[13.5px] text-[#2C2825] leading-relaxed italic">{draft.content}</p>
             <button
               onClick={handleSaveDraft}
               disabled={saving}
-              className="self-start px-4 py-2 bg-[#9B5E3A] text-white rounded-xl text-[12px] font-semibold hover:bg-[#7A4A2C] disabled:opacity-40 transition-colors"
+              className="self-start px-4 py-2 bg-[#9B5E3A] text-white rounded-xl text-[12px] font-medium hover:bg-[#7A4A2C] disabled:opacity-40 transition-colors"
             >
               {saving ? 'Sauvegarde…' : 'Valider et sauvegarder'}
             </button>
@@ -196,7 +361,7 @@ export default function ChatPanel({ context, onLastMessage, onAlineaSaved }: Pro
         )}
 
         {saved && (
-          <div className="self-start text-[13px] text-[#4A7A5A] bg-[#EEF4EE] border border-[#C4DCC4] rounded-xl px-4 py-2.5">
+          <div className="self-start text-[12px] text-[#4A7A5A] bg-[#EEF4EE] border border-[#C4DCC4] rounded-xl px-4 py-2">
             ✓ Alinéa sauvegardé
           </div>
         )}

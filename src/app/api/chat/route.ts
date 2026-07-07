@@ -35,7 +35,7 @@ Tu alternes entre 4 modes selon le moment :
 - Si l'utilisateur évoque quelque chose de difficile : reconnaître la difficulté, ralentir, rester simple
 - Langue : français uniquement`
 
-const DRAFT_SIGNAL = `## Signal de fin
+const DRAFT_SIGNAL = `## Signal de fin — brouillon d'alinéa
 
 Quand tu génères le brouillon d'alinéa final, tu DOIS terminer ton message par ce bloc JSON exactement, sur une nouvelle ligne :
 
@@ -44,6 +44,35 @@ Quand tu génères le brouillon d'alinéa final, tu DOIS terminer ton message pa
 \`\`\`
 
 Le "content" doit être le texte de l'alinéa rédigé à la première personne, entre 3 et 8 phrases. Le "title" est un titre court et évocateur. Choisis l'émotion et la catégorie qui correspondent le mieux au souvenir. "approximate_date" est une date approximative en texte libre si elle est mentionnée, sinon null.`
+
+const MEMORY_SIGNAL = `## Détection et mémorisation — règle capitale
+
+Quand l'utilisateur mentionne une NOUVELLE entité absente de ton index (personne, événement de vie, thématique, lieu, phase de vie), tu dois :
+
+1. Répondre naturellement dans le fil de la conversation.
+2. À la fin de ton message, présenter en clair les éléments que tu souhaites retenir :
+   "Dans ce que tu viens de partager, j'aimerais retenir : ..."
+3. Terminer ton message par le bloc JSON ci-dessous — et UNIQUEMENT si tu as des entités nouvelles à valider.
+
+RÈGLE ABSOLUE :
+- Ne proposer QUE des entités absentes de l'index (personnes, events, thèmes déjà listés → ne pas reproposer).
+- Attendre la confirmation de l'utilisateur avant tout enregistrement.
+- Ne jamais émettre ce bloc pour un brouillon d'alinéa (les deux blocs ne coexistent pas).
+
+Types supportés :
+- "person"     → personne importante (data: name, relation, relation_type)
+- "life_event" → événement de vie (data: title, year — year est un entier ou null)
+- "theme"      → fil thématique (data: name)
+- "place"      → lieu fondateur (data: name, role)
+- "life_phase" → période de vie (data: name, year_start, year_end — entiers, year_end null si en cours)
+
+Format du bloc (terminer le message par ce JSON exact) :
+
+\`\`\`memory-pending
+[{"type":"person","icon":"👤","label":"Baptiste","data":{"name":"Baptiste","relation":"ami de longue date","relation_type":"amitié"}},{"type":"life_event","icon":"📅","label":"La rencontre avec Laurence","data":{"title":"La rencontre avec Laurence","year":1982}}]
+\`\`\`
+
+Exemples d'icônes : 👤 person · 📅 life_event · 🏷 theme · 📍 place · 🗓 life_phase`
 
 const MEMORY_TOOLS: Anthropic.Tool[] = [
   {
@@ -171,7 +200,38 @@ function buildNewSystemPrompt(memoryBlock: string): string {
 3. Quand tu as suffisamment de matière (généralement après 3–5 échanges), rédige un premier alinéa à la première personne. Annonce-le avant.
 4. Propose à l'utilisateur de valider ou d'ajuster.
 
-${DRAFT_SIGNAL}`
+${DRAFT_SIGNAL}
+
+${MEMORY_SIGNAL}`
+}
+
+function buildOnboardingMode1Prompt(memoryBlock: string): string {
+  return `${PERSONALITY}${memoryBlock}
+
+## Mode onboarding — première rencontre (Mode 1)
+
+L'utilisateur vient de créer son compte. Tu le rencontres pour la première fois.
+Ton objectif : recueillir trois informations essentielles en 3 à 4 échanges naturels, pas plus.
+
+**Étape 1 — Prénom** (si absent du profil)
+> "Bonjour ! Je vais t'accompagner pour explorer et raconter ta vie, à ton rythme. Pour commencer — comment aimerais-tu que je t'appelle ?"
+
+**Étape 2 — Année de naissance** (si absente du profil)
+> "Et en quelle année es-tu né(e) ?"
+
+**Étape 3 — Famille immédiate** (si aucune personne en base)
+> "Tu as des enfants ? Un(e) conjoint(e) ? Des parents encore présents ?"
+L'IA collecte les personnes nommées et leurs liens au fil de la réponse — pas de formulaire.
+
+**Règles strictes pour ce mode :**
+- Une question à la fois, pas de liste
+- Ton factuel et chaleureux — pas émotionnel, pas profond
+- Dès que les 3 étapes sont faites, conclure :
+  > "C'est tout ce dont j'ai besoin pour commencer. Ta grille est prête — elle se remplira au fil de nos échanges. Tu veux qu'on continue à l'explorer ensemble maintenant ?"
+- Si l'utilisateur veut en dire plus → l'écouter mais rester en mode collecte léger, pas d'approfondissement
+- Utiliser le bloc memory-pending dès qu'une entité est à mémoriser (prénom → profil, famille → personnes)
+
+${MEMORY_SIGNAL}`
 }
 
 function buildEditSystemPrompt(existingContent: string, memoryBlock: string, aiMemory?: string): string {
@@ -236,18 +296,31 @@ export async function POST(request: NextRequest) {
     }
   } catch { /* continuer sans mémoire */ }
 
+  // Détecter le mode onboarding Mode 1
+  const isOnboardingMode1 = !existingContent
+    && incomingMessages.length === 1
+    && (incomingMessages[0] as Anthropic.MessageParam).role === 'user'
+    && (incomingMessages[0] as Anthropic.MessageParam).content === '__onboarding_mode1__'
+
   const systemPrompt = existingContent
     ? buildEditSystemPrompt(existingContent, memoryBlock, aiMemory)
+    : isOnboardingMode1
+    ? buildOnboardingMode1Prompt(memoryBlock)
     : buildNewSystemPrompt(memoryBlock)
+
+  // Remplacer le seed technique par un déclencheur neutre pour l'IA
+  const effectiveMessages = isOnboardingMode1
+    ? [{ role: 'user' as const, content: 'Bonjour' }]
+    : incomingMessages
 
   const encoder = new TextEncoder()
 
   const readable = new ReadableStream({
     async start(controller) {
-      let messages: Anthropic.MessageParam[] = incomingMessages
       let loopCount = 0
 
       try {
+        let messages: Anthropic.MessageParam[] = effectiveMessages
         while (loopCount < 4) {
           const stream = client.messages.stream({
             model: 'claude-haiku-4-5',

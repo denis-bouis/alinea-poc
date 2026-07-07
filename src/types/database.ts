@@ -37,6 +37,8 @@ type AlineaRow = {
   location: string | null
   ai_memory: string | null
   status: 'draft' | 'validated'
+  life_event_id: string | null   // migration 013
+  sort_order: number             // migration 013
   created_at: string
   updated_at: string
 }
@@ -87,10 +89,26 @@ type LifeEventRow = {
   id: string
   user_id: string
   year: number
+  event_month: number | null     // migration 013
+  event_day: number | null       // migration 013
+  life_phase_id: string | null    // migration 013
   title: string
   status: 'undocumented' | 'draft' | 'validated'
+  documented: boolean            // migration 013
   is_pivot: boolean              // migration 009
   emotional_intensity: number    // migration 009 — 0 à 3
+  created_at: string
+  updated_at: string
+}
+
+type LifePhaseRow = {            // migration 013
+  id: string
+  user_id: string
+  name: string
+  description: string | null
+  year_start: number | null
+  year_end: number | null
+  sort_order: number
   created_at: string
   updated_at: string
 }
@@ -120,7 +138,7 @@ type PersonRow = {
   birth_year: number | null
   is_deceased: boolean
   death_year: number | null
-  first_mention: 'onboarding' | 'frise' | 'alinea' | 'manual'
+  first_mention: 'onboarding' | 'frise' | 'alinea' | 'manual' | 'dialogue'
   ai_summary: string | null
   alinea_count: number   // maintenu par trigger
   pending_qualification: boolean
@@ -192,7 +210,7 @@ export type Database = {
       }
       alineas: {
         Row: AlineaRow
-        Insert: Omit<AlineaRow, 'id' | 'created_at' | 'updated_at' | 'title' | 'content' | 'media_url' | 'emotion' | 'category' | 'approximate_date' | 'location' | 'status'> & {
+        Insert: Omit<AlineaRow, 'id' | 'created_at' | 'updated_at' | 'title' | 'content' | 'media_url' | 'emotion' | 'category' | 'approximate_date' | 'location' | 'status' | 'life_event_id' | 'sort_order'> & {
           title?: string | null
           content?: string | null
           media_url?: string | null
@@ -204,6 +222,8 @@ export type Database = {
           event_day?: number | null
           location?: string | null
           status?: 'draft' | 'validated'
+          life_event_id?: string | null
+          sort_order?: number
         }
         Update: Partial<Omit<AlineaRow, 'id' | 'user_id' | 'created_at' | 'updated_at'>>
         Relationships: []
@@ -238,8 +258,26 @@ export type Database = {
           status?: string
           is_pivot?: boolean
           emotional_intensity?: number
+          event_month?: number | null
+          event_day?: number | null
+          life_phase_id?: string | null
+          documented?: boolean
         }
         Update: Partial<Omit<LifeEventRow, 'id' | 'user_id' | 'created_at' | 'updated_at'>>
+        Relationships: []
+      }
+      life_phases: {
+        Row: LifePhaseRow
+        Insert: {
+          user_id: string
+          name: string
+          id?: string
+          description?: string | null
+          year_start?: number | null
+          year_end?: number | null
+          sort_order?: number
+        }
+        Update: Partial<Omit<LifePhaseRow, 'id' | 'user_id' | 'created_at' | 'updated_at'>>
         Relationships: []
       }
       life_event_themes: {

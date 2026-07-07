@@ -1,17 +1,25 @@
 @import "tailwindcss";
 
 @theme {
-  /* Palette Alinéa — papier crème */
-  --color-cream:      #FAF6F0;
-  --color-surface:    #F0E8DC;
-  --color-surface2:   #E6DAC8;
-  --color-accent:     #9B5E3A;
+  /* Palette Alinéa — système de design IHM (2026-06-26) */
+  --color-cream:      #FAF8F4;  /* fond global — crème chaud, jamais blanc pur */
+  --color-surface:    #F2EDE5;  /* surface légèrement contrastée */
+  --color-surface2:   #E8E2D9;  /* lignes de grille / surfaces */
+  --color-accent:     #9B5E3A;  /* terracotta — boutons d'action */
   --color-accent-dk:  #7D4A2C;
-  --color-ink:        #3D2B1A;
-  --color-muted:      #8C7565;
-  --color-border:     rgba(60, 30, 10, 0.10);
+  --color-ink:        #2C2825;  /* texte principal — brun foncé doux */
+  --color-muted:      #8C8278;  /* texte secondaire — gris chaud */
+  --color-line:       #E8E2D9;  /* ligne de grille — sable */
+  --color-sep:        #D4CEC6;  /* séparateur entre phases */
+  --color-border:     rgba(44, 40, 37, 0.10);
   --color-green:      #4A7A5A;
   --color-green-bg:   #EEF4EE;
+
+  /* Couleurs de phases — mates, non saturées */
+  --color-phase-1:    #B8CCE0;  /* bleu ardoise */
+  --color-phase-2:    #A8C4A8;  /* vert sauge */
+  --color-phase-3:    #D4A882;  /* terracotta sable */
+  --color-phase-4:    #C4A8C0;  /* mauve poudré */
 
   /* Polices */
   --font-sans:   var(--font-inter);
@@ -24,13 +32,27 @@
 }
 
 html {
-  background: #FAF6F0;
+  background: #FAF8F4;
 }
 
 body {
-  background: #FAF6F0;
-  color: #3D2B1A;
+  background: #FAF8F4;
+  color: #2C2825;
   -webkit-font-smoothing: antialiased;
+}
+
+/* ── Grille de vie — tooltip event au survol (delay 200ms) ────────────────── */
+.grille-event { position: relative; }
+.grille-tooltip {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+  transition-delay: 0s;
+}
+.grille-event:hover .grille-tooltip {
+  opacity: 1;
+  transition-delay: 0.2s;
+  z-index: 30;
 }
 
 /* ── Frise — bouton zoom ──────────────────────────────────────────────────── */

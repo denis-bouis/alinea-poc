@@ -1,5 +1,5 @@
--- Extensions
-create extension if not exists "uuid-ossp";
+-- Extensions (uuid-ossp n'est pas nécessaire — gen_random_uuid() est natif PG13+)
+-- create extension if not exists "uuid-ossp";
 
 -- Profiles (étend auth.users de Supabase)
 create table public.profiles (
@@ -14,7 +14,7 @@ create table public.profiles (
 
 -- Alinéas
 create table public.alineas (
-  id uuid primary key default uuid_generate_v4(),
+  id uuid primary key default gen_random_uuid(),
   user_id uuid references public.profiles(id) on delete cascade not null,
   title text,
   content text,
@@ -35,7 +35,7 @@ create table public.alineas (
 
 -- Cercles de partage
 create table public.circles (
-  id uuid primary key default uuid_generate_v4(),
+  id uuid primary key default gen_random_uuid(),
   owner_id uuid references public.profiles(id) on delete cascade not null,
   name text not null,
   created_at timestamptz not null default now()

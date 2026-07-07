@@ -25,7 +25,6 @@ export default function LoginPage() {
   return (
     <main className="min-h-screen flex items-center justify-center bg-cream px-6">
       <div className="w-full max-w-sm">
-        {/* Logo */}
         <div className="mb-10 text-center">
           <h1 className="font-serif text-4xl font-bold text-ink tracking-wide">
             Alin<span className="text-accent">é</span>a
