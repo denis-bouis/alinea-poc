@@ -49,7 +49,10 @@ function parseDraft(text: string): AlineaDraft | null {
 }
 
 function stripDraftBlock(text: string): string {
-  return text.replace(/```alinea-draft[\s\S]*?```/, '').trim()
+  return text
+    .replace(/```alinea-draft[\s\S]*?```/, '')
+    .replace(/```memory-pending[\s\S]*?```/, '')
+    .trim()
 }
 
 export default function NewAlineaPage() {

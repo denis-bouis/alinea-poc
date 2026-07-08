@@ -1,6 +1,11 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { NextRequest } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import {
+  AGENT_TOOLS, READ_TOOL_NAMES, IMMEDIATE_WRITE_TOOL_NAMES,
+  executeReadTool, executeFlagAmbiguous, labelForWrite, iconForWrite,
+  type PendingWrite,
+} from '@/lib/agent/tools'
 
 const client = new Anthropic()
 
@@ -37,66 +42,26 @@ Tu alternes entre 4 modes selon le moment :
 
 const DRAFT_SIGNAL = `## Signal de fin — brouillon d'alinéa
 
-Quand tu génères le brouillon d'alinéa final, tu DOIS terminer ton message par ce bloc JSON exactement, sur une nouvelle ligne :
+Quand tu génères le brouillon d'alinéa final (rédaction complète, sur demande explicite de l'utilisateur — bouton ou phrase du type "tu peux rédiger ça ?"), tu DOIS terminer ton message par ce bloc JSON exactement, sur une nouvelle ligne :
 
 \`\`\`alinea-draft
 {"title": "...", "content": "...", "emotion": "joy|pride|nostalgia|sadness|gratitude", "category": "places|people|moments|transitions|objects|values", "approximate_date": "...ou null"}
 \`\`\`
 
-Le "content" doit être le texte de l'alinéa rédigé à la première personne, entre 3 et 8 phrases. Le "title" est un titre court et évocateur. Choisis l'émotion et la catégorie qui correspondent le mieux au souvenir. "approximate_date" est une date approximative en texte libre si elle est mentionnée, sinon null.`
+Le "content" doit être le texte de l'alinéa rédigé à la première personne, entre 3 et 8 phrases. Le "title" est un titre court et évocateur. Choisis l'émotion et la catégorie qui correspondent le mieux au souvenir. "approximate_date" est une date approximative en texte libre si elle est mentionnée, sinon null.
 
-const MEMORY_SIGNAL = `## Détection et mémorisation — règle capitale
+Hors de cette demande explicite, tu ne rédiges pas de texte narratif fini — tu peux en revanche amorcer un futur alinéa avec l'outil seed_alinea dès qu'une trame narrative émerge, sans attendre la demande de rédaction.`
 
-Quand l'utilisateur mentionne une NOUVELLE entité absente de ton index (personne, événement de vie, thématique, lieu, phase de vie), tu dois :
+const AGENT_LOOP_RULES = `## Mémoire — règle capitale : chercher avant d'écrire, jamais de mémorisation silencieuse
 
-1. Répondre naturellement dans le fil de la conversation.
-2. À la fin de ton message, présenter en clair les éléments que tu souhaites retenir :
-   "Dans ce que tu viens de partager, j'aimerais retenir : ..."
-3. Terminer ton message par le bloc JSON ci-dessous — et UNIQUEMENT si tu as des entités nouvelles à valider.
+Tu disposes d'outils pour consulter et faire évoluer la mémoire de vie (personnes, thématiques, lieux, phases de vie, événements, alinéas). Applique strictement :
 
-RÈGLE ABSOLUE :
-- Ne proposer QUE des entités absentes de l'index (personnes, events, thèmes déjà listés → ne pas reproposer).
-- Attendre la confirmation de l'utilisateur avant tout enregistrement.
-- Ne jamais émettre ce bloc pour un brouillon d'alinéa (les deux blocs ne coexistent pas).
-
-Types supportés :
-- "person"     → personne importante (data: name, relation, relation_type)
-- "life_event" → événement de vie (data: title, year — year est un entier ou null)
-- "theme"      → fil thématique (data: name)
-- "place"      → lieu fondateur (data: name, role)
-- "life_phase" → période de vie (data: name, year_start, year_end — entiers, year_end null si en cours)
-
-Format du bloc (terminer le message par ce JSON exact) :
-
-\`\`\`memory-pending
-[{"type":"person","icon":"👤","label":"Baptiste","data":{"name":"Baptiste","relation":"ami de longue date","relation_type":"amitié"}},{"type":"life_event","icon":"📅","label":"La rencontre avec Laurence","data":{"title":"La rencontre avec Laurence","year":1982}}]
-\`\`\`
-
-Exemples d'icônes : 👤 person · 📅 life_event · 🏷 theme · 📍 place · 🗓 life_phase`
-
-const MEMORY_TOOLS: Anthropic.Tool[] = [
-  {
-    name: 'fetch_memory',
-    description:
-      "Récupère le contenu complet d'un souvenir (alinéa rédigé) ou d'un événement de vie à partir de son identifiant. " +
-      "Utilise cet outil dès que l'utilisateur fait référence à un souvenir ou événement présent dans l'index — avant de formuler ta réponse.",
-    input_schema: {
-      type: 'object' as const,
-      properties: {
-        type: {
-          type: 'string',
-          enum: ['alinea', 'life_event'],
-          description: "'alinea' pour un souvenir rédigé, 'life_event' pour un événement de la frise de vie",
-        },
-        id: {
-          type: 'string',
-          description: "UUID de l'élément, tel qu'il apparaît dans l'index",
-        },
-      },
-      required: ['type', 'id'],
-    },
-  },
-]
+1. **Cherche avant d'écrire.** Dès qu'une entité (personne, lieu, thématique, phase, événement) est mentionnée, utilise l'outil de recherche correspondant (search_people, search_themes, search_places, search_life_phases, search_life_events) avant toute proposition d'écriture — pour savoir si elle existe déjà.
+2. **Lis avant de décider.** Si un candidat plausible ressort de la recherche, utilise l'outil get_* correspondant pour lire la fiche complète avant de choisir entre mise à jour et création.
+3. **Jamais de mémorisation silencieuse.** Les outils d'écriture (upsert_person, upsert_place, upsert_life_phase, upsert_life_event, propose_theme, update_theme, link_people_relation, declare_family_unit, seed_alinea, update_profile) n'enregistrent qu'une PROPOSITION — ils ne s'exécutent jamais tout de suite. Avant de les appeler, ou juste après, EXPLICITE dans ta réponse ce que tu proposes de retenir, en langage naturel, sans jargon technique (ex. "je note ceci comme...") — jamais une affirmation déguisée en fait acquis. Termine ton message normalement ; l'utilisateur confirmera ou ajustera au tour suivant.
+4. **Ambiguïté → flag_ambiguous.** Si deux fiches proches ou une information incertaine te empêchent de trancher, n'invente pas — dépose l'ambiguïté avec flag_ambiguous (celui-ci s'exécute immédiatement, ce n'est pas une proposition) et continue le dialogue normalement.
+5. **Rien à retenir → rien à faire.** N'appelle aucun outil d'écriture si l'échange n'apporte rien de nouveau.
+6. Ne mentionne jamais d'outil, de base de données ou de mécanisme technique à l'utilisateur — parle naturellement.`
 
 type AiProfile = {
   display_name: string | null
@@ -126,7 +91,6 @@ function buildMemoryBlock(
   if (themes.length > 0)
     lines.push(`Thématiques de vie : ${themes.map(t => `${t.name} [${t.maturity}]`).join(', ')}`)
 
-  // Index — titres + IDs uniquement, pas de contenu
   lines.push('\n## Index des souvenirs')
 
   if (events.length > 0) {
@@ -149,45 +113,13 @@ function buildMemoryBlock(
   }
 
   lines.push(`
-## Règles de mémoire
+## Règles d'usage de l'index
 
 - Si l'utilisateur mentionne un sujet présent dans l'index → utilise fetch_memory avant de répondre.
 - Si le sujet est absent de l'index → signale-le simplement et propose d'en parler.
-- Ne jamais inventer de contenu non chargé via fetch_memory.
-- Parle naturellement — ne mentionne jamais de base de données, d'index ou d'outil.`)
+- Ne jamais inventer de contenu non chargé via fetch_memory.`)
 
   return '\n\n' + lines.join('\n')
-}
-
-async function executeFetchMemory(
-  input: { type: string; id: string },
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  userId: string,
-): Promise<string> {
-  if (input.type === 'alinea') {
-    const { data } = await supabase
-      .from('alineas')
-      .select('title, content, approximate_date, emotion, category')
-      .eq('id', input.id)
-      .eq('user_id', userId)
-      .single()
-    if (!data) return 'Souvenir introuvable.'
-    const header = [data.title ?? 'Sans titre', data.approximate_date].filter(Boolean).join(' · ')
-    return `**${header}**\n\n${data.content ?? '(contenu vide)'}`
-  }
-
-  if (input.type === 'life_event') {
-    const { data } = await supabase
-      .from('life_events')
-      .select('year, title, is_pivot, emotional_intensity')
-      .eq('id', input.id)
-      .eq('user_id', userId)
-      .single()
-    if (!data) return 'Événement introuvable.'
-    return `**${data.year} — ${data.title}**${data.is_pivot ? ' [moment tournant]' : ''}\nIntensité émotionnelle : ${data.emotional_intensity}/3`
-  }
-
-  return 'Type inconnu.'
 }
 
 function buildNewSystemPrompt(memoryBlock: string): string {
@@ -197,12 +129,12 @@ function buildNewSystemPrompt(memoryBlock: string): string {
 
 1. Commence par une question d'amorce sur le souvenir que l'utilisateur veut partager.
 2. Creuse avec 1 à 2 questions de suivi pour obtenir des détails sensoriels, émotionnels, des personnes impliquées.
-3. Quand tu as suffisamment de matière (généralement après 3–5 échanges), rédige un premier alinéa à la première personne. Annonce-le avant.
-4. Propose à l'utilisateur de valider ou d'ajuster.
+3. Quand une trame narrative émerge, amorce un alinéa (seed_alinea) — cf. règles mémoire ci-dessous.
+4. Si l'utilisateur demande explicitement une rédaction complète, rédige un alinéa et annonce-le avant.
 
 ${DRAFT_SIGNAL}
 
-${MEMORY_SIGNAL}`
+${AGENT_LOOP_RULES}`
 }
 
 function buildOnboardingMode1Prompt(memoryBlock: string): string {
@@ -221,7 +153,7 @@ Ton objectif : recueillir trois informations essentielles en 3 à 4 échanges na
 
 **Étape 3 — Famille immédiate** (si aucune personne en base)
 > "Tu as des enfants ? Un(e) conjoint(e) ? Des parents encore présents ?"
-L'IA collecte les personnes nommées et leurs liens au fil de la réponse — pas de formulaire.
+Collecte les personnes nommées et leurs liens au fil de la réponse — pas de formulaire.
 
 **Règles strictes pour ce mode :**
 - Une question à la fois, pas de liste
@@ -229,9 +161,9 @@ L'IA collecte les personnes nommées et leurs liens au fil de la réponse — pa
 - Dès que les 3 étapes sont faites, conclure :
   > "C'est tout ce dont j'ai besoin pour commencer. Ta grille est prête — elle se remplira au fil de nos échanges. Tu veux qu'on continue à l'explorer ensemble maintenant ?"
 - Si l'utilisateur veut en dire plus → l'écouter mais rester en mode collecte léger, pas d'approfondissement
-- Utiliser le bloc memory-pending dès qu'une entité est à mémoriser (prénom → profil, famille → personnes)
+- Prénom/année → propose via update_profile ; famille → propose via upsert_person (un appel par personne)
 
-${MEMORY_SIGNAL}`
+${AGENT_LOOP_RULES}`
 }
 
 function buildEditSystemPrompt(existingContent: string, memoryBlock: string, aiMemory?: string): string {
@@ -248,7 +180,9 @@ ${existingContent}
 
 Commence par lui demander ce qu'il voudrait améliorer ou approfondir. Quand tu as suffisamment de matière, propose une version révisée.
 
-${DRAFT_SIGNAL}`
+${DRAFT_SIGNAL}
+
+${AGENT_LOOP_RULES}`
 }
 
 export async function POST(request: NextRequest) {
@@ -258,7 +192,6 @@ export async function POST(request: NextRequest) {
     aiMemory?: string
   }
 
-  // Auth + chargement de l'index mémoire
   let memoryBlock = ''
   let supabase: Awaited<ReturnType<typeof createClient>> | null = null
   let userId: string | null = null
@@ -296,7 +229,6 @@ export async function POST(request: NextRequest) {
     }
   } catch { /* continuer sans mémoire */ }
 
-  // Détecter le mode onboarding Mode 1
   const isOnboardingMode1 = !existingContent
     && incomingMessages.length === 1
     && (incomingMessages[0] as Anthropic.MessageParam).role === 'user'
@@ -308,7 +240,6 @@ export async function POST(request: NextRequest) {
     ? buildOnboardingMode1Prompt(memoryBlock)
     : buildNewSystemPrompt(memoryBlock)
 
-  // Remplacer le seed technique par un déclencheur neutre pour l'IA
   const effectiveMessages = isOnboardingMode1
     ? [{ role: 'user' as const, content: 'Bonjour' }]
     : incomingMessages
@@ -318,19 +249,19 @@ export async function POST(request: NextRequest) {
   const readable = new ReadableStream({
     async start(controller) {
       let loopCount = 0
+      const pendingWrites: PendingWrite[] = []
 
       try {
         let messages: Anthropic.MessageParam[] = effectiveMessages
-        while (loopCount < 4) {
+        while (loopCount < 6) {
           const stream = client.messages.stream({
-            model: 'claude-haiku-4-5',
-            max_tokens: 1024,
+            model: 'claude-sonnet-4-6',
+            max_tokens: 1536,
             system: systemPrompt,
-            tools: MEMORY_TOOLS,
+            tools: AGENT_TOOLS,
             messages,
           })
 
-          // Pipe les deltas texte directement vers le client
           stream.on('text', (text) => {
             controller.enqueue(encoder.encode(text))
           })
@@ -339,7 +270,6 @@ export async function POST(request: NextRequest) {
 
           if (message.stop_reason !== 'tool_use') break
 
-          // Exécuter les outils demandés par l'IA
           const toolUseBlocks = message.content.filter(
             (b): b is Anthropic.ToolUseBlock => b.type === 'tool_use',
           )
@@ -347,12 +277,16 @@ export async function POST(request: NextRequest) {
           const toolResults: Anthropic.ToolResultBlockParam[] = await Promise.all(
             toolUseBlocks.map(async (block) => {
               let content = 'Outil non disponible'
-              if (block.name === 'fetch_memory' && supabase && userId) {
-                content = await executeFetchMemory(
-                  block.input as { type: string; id: string },
-                  supabase,
-                  userId,
-                )
+              if (supabase && userId) {
+                if (READ_TOOL_NAMES.has(block.name)) {
+                  content = await executeReadTool(block.name, block.input as Record<string, unknown>, supabase, userId)
+                } else if (IMMEDIATE_WRITE_TOOL_NAMES.has(block.name)) {
+                  content = await executeFlagAmbiguous(block.input as Record<string, unknown>, supabase, userId)
+                } else {
+                  // Écriture différée : on enregistre la proposition, on ne l'exécute pas.
+                  pendingWrites.push({ tool: block.name, input: block.input as Record<string, unknown> })
+                  content = 'Proposition enregistrée, en attente de confirmation utilisateur.'
+                }
               }
               return { type: 'tool_result' as const, tool_use_id: block.id, content }
             }),
@@ -364,6 +298,16 @@ export async function POST(request: NextRequest) {
             { role: 'user' as const, content: toolResults },
           ]
           loopCount++
+        }
+
+        if (pendingWrites.length > 0) {
+          const payload = pendingWrites.map(w => ({
+            tool: w.tool,
+            input: w.input,
+            label: labelForWrite(w.tool, w.input),
+            icon: iconForWrite(w.tool),
+          }))
+          controller.enqueue(encoder.encode(`\n\n\`\`\`memory-pending\n${JSON.stringify(payload)}\n\`\`\``))
         }
       } finally {
         controller.close()

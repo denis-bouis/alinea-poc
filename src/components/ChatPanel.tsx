@@ -5,7 +5,14 @@ import { createClient } from '@/lib/supabase/client'
 import { parseFrenchDate } from '@/lib/parse-date'
 import type { Theme, LifeEvent } from '@/types/domain'
 import type { EmotionTag, ThematicCategory } from '@/types/database'
-import type { PendingEntity } from '@/app/api/memory/confirm/route'
+import type { PendingWrite } from '@/app/api/memory/confirm/route'
+import type { EntityRef } from '@/components/DetailPanel'
+
+const VOICE_MAX_SECONDS = 120
+
+// Une proposition d'écriture différée — même appel qui produit la réponse,
+// via le tool-use natif (cf. /api/chat) — label/icon dérivés côté serveur.
+type PendingItem = PendingWrite & { label: string; icon: string }
 
 export type ChatContext =
   | { type: 'event'; event: LifeEvent }
@@ -28,14 +35,13 @@ function parseDraft(text: string): AlineaDraft | null {
   try { return JSON.parse(m[1]) as AlineaDraft } catch { return null }
 }
 
-function parsePending(text: string): { entities: PendingEntity[]; raw: string } | null {
+function parsePending(text: string): PendingItem[] {
   const m = text.match(/```memory-pending\n([\s\S]*?)\n```/)
-  if (!m) return null
+  if (!m) return []
   try {
     const parsed = JSON.parse(m[1])
-    if (!Array.isArray(parsed) || parsed.length === 0) return null
-    return { entities: parsed as PendingEntity[], raw: m[1] }
-  } catch { return null }
+    return Array.isArray(parsed) ? parsed as PendingItem[] : []
+  } catch { return [] }
 }
 
 function stripSignals(text: string): string {
@@ -56,9 +62,11 @@ type Props = {
   onboardingStep?: number
   onLastMessage:  (msg: string) => void
   onAlineaSaved:  () => void
+  focus?:         EntityRef | null
+  onClearFocus?:  () => void
 }
 
-export default function ChatPanel({ context, onboardingStep = 10, onLastMessage, onAlineaSaved }: Props) {
+export default function ChatPanel({ context, onboardingStep = 10, onLastMessage, onAlineaSaved, focus, onClearFocus }: Props) {
   const [messages,       setMessages]       = useState<Message[]>([])
   const [apiMessages,    setApiMessages]    = useState<ApiMessage[]>([])
   const [inputVal,       setInputVal]       = useState('')
@@ -66,27 +74,42 @@ export default function ChatPanel({ context, onboardingStep = 10, onLastMessage,
   const [draft,          setDraft]          = useState<AlineaDraft | null>(null)
   const [saving,         setSaving]         = useState(false)
   const [saved,          setSaved]          = useState(false)
-  const [accumulated,    setAccumulated]    = useState<PendingEntity[]>([])
-  const [extracting,     setExtracting]     = useState(false)
-  const [aiReady,        setAiReady]        = useState(false)
+  const [pendingItems,   setPendingItems]   = useState<PendingItem[]>([])
   const [savingMemory,   setSavingMemory]   = useState(false)
   const [memorySaved,    setMemorySaved]    = useState(false)
   const [memoryError,    setMemoryError]    = useState<string | null>(null)
   const [debugOpen,      setDebugOpen]      = useState(false)
   const [panelOpen,      setPanelOpen]      = useState(true)
+  const [focusFlash,     setFocusFlash]     = useState(false)
+  const [recording,      setRecording]      = useState(false)
+  const [recordSeconds,  setRecordSeconds]  = useState(VOICE_MAX_SECONDS)
+  const [transcribing,   setTranscribing]   = useState(false)
 
-  const msgsRef        = useRef<HTMLDivElement>(null)
-  const inputRef       = useRef<HTMLInputElement>(null)
-  const accumulatedRef = useRef<PendingEntity[]>([])
+  const msgsRef  = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const chunksRef        = useRef<Blob[]>([])
+  const timerRef         = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  // Garder le ref synchrone pour éviter les closures périmées dans sendToAI
-  useEffect(() => { accumulatedRef.current = accumulated }, [accumulated])
+  // Flash bref du bandeau de focus à chaque changement
+  useEffect(() => {
+    if (!focus) return
+    setFocusFlash(true)
+    const t = setTimeout(() => setFocusFlash(false), 900)
+    return () => clearTimeout(t)
+  }, [focus])
+
+  // Coupe micro/minuteur si le composant démonte pendant un enregistrement
+  useEffect(() => () => {
+    if (timerRef.current) clearInterval(timerRef.current)
+    mediaRecorderRef.current?.stream.getTracks().forEach(t => t.stop())
+  }, [])
 
   const scrollDown = useCallback(() => {
     setTimeout(() => msgsRef.current?.scrollTo({ top: msgsRef.current.scrollHeight, behavior: 'smooth' }), 50)
   }, [])
 
-  const sendToAI = useCallback(async (msgs: ApiMessage[], opts?: { isSeed?: boolean }) => {
+  const sendToAI = useCallback(async (msgs: ApiMessage[]) => {
     setStreaming(true)
     let buffer = ''
     setMessages(prev => [...prev, { role: 'ai', text: '' }])
@@ -122,30 +145,21 @@ export default function ChatPanel({ context, onboardingStep = 10, onLastMessage,
       const updatedApiMsgs = [...msgs, { role: 'assistant' as const, content: buffer }]
       setApiMessages(updatedApiMsgs)
 
-      // Capture progressive — jamais sur le message initial de l'IA (seed),
-      // ni sur un brouillon d'alinéa. On accumule et affine au fil des échanges.
-      if (!foundDraft && !opts?.isSeed) {
-        const lastUserMsg = msgs[msgs.length - 1]?.content ?? ''
-        setExtracting(true)
-        fetch('/api/memory/extract', {
-          method:  'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({
-            accumulated:     accumulatedRef.current,
-            lastUserMessage: lastUserMsg,
-            lastAiMessage:   displayText,
-          }),
+      // Propositions d'écriture du tour courant (tool-use réel, cf. /api/chat) —
+      // accumulées avec celles des tours précédents tant qu'elles ne sont pas
+      // confirmées ou retirées (une même entité rediscutée remplace l'ancienne).
+      const newItems = parsePending(buffer)
+      if (newItems.length > 0) {
+        setPendingItems(prev => {
+          const merged = [...prev]
+          for (const item of newItems) {
+            const idx = merged.findIndex(m => m.tool === item.tool && m.label === item.label)
+            if (idx >= 0) merged[idx] = item
+            else merged.push(item)
+          }
+          return merged
         })
-          .then(r => r.json())
-          .then(({ entities, ready }: { entities: PendingEntity[]; ready: boolean }) => {
-            if (Array.isArray(entities)) {
-              setAccumulated(entities)
-              if (entities.length > 0) setMemorySaved(false)
-            }
-            setAiReady(Boolean(ready))
-          })
-          .catch(() => {/* silencieux */})
-          .finally(() => setExtracting(false))
+        setMemorySaved(false)
       }
     } finally {
       setStreaming(false)
@@ -163,7 +177,7 @@ export default function ChatPanel({ context, onboardingStep = 10, onLastMessage,
     } else {
       seed = 'Commence'
     }
-    sendToAI([{ role: 'user', content: seed }], { isSeed: true })
+    sendToAI([{ role: 'user', content: seed }])
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -179,27 +193,89 @@ export default function ChatPanel({ context, onboardingStep = 10, onLastMessage,
     await sendToAI(newMsgs)
   }, [inputVal, streaming, saving, apiMessages, sendToAI, scrollDown])
 
+  const sendVoiceMessage = useCallback(async (blob: Blob) => {
+    setTranscribing(true)
+    try {
+      const form = new FormData()
+      form.append('audio', blob, 'recording.webm')
+      const res = await fetch('/api/transcribe', { method: 'POST', body: form })
+      const body = await res.json().catch(() => ({})) as { text?: string }
+      const text = body.text?.trim()
+      if (!text) return
+      const userMsg: ApiMessage = { role: 'user', content: text }
+      const newMsgs = [...apiMessages, userMsg]
+      setMessages(prev => [...prev, { role: 'user', text }])
+      setApiMessages(newMsgs)
+      scrollDown()
+      await sendToAI(newMsgs)
+    } finally {
+      setTranscribing(false)
+    }
+  }, [apiMessages, sendToAI, scrollDown])
+
+  const stopRecording = useCallback((send: boolean) => {
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
+    const recorder = mediaRecorderRef.current
+    if (!recorder) return
+    if (send) {
+      recorder.addEventListener('stop', () => {
+        const blob = new Blob(chunksRef.current, { type: 'audio/webm' })
+        sendVoiceMessage(blob)
+      }, { once: true })
+      recorder.stop()
+    } else {
+      recorder.stop()
+    }
+    recorder.stream.getTracks().forEach(t => t.stop())
+    mediaRecorderRef.current = null
+    setRecording(false)
+  }, [sendVoiceMessage])
+
+  async function startRecording() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const recorder = new MediaRecorder(stream)
+      chunksRef.current = []
+      recorder.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data) }
+      mediaRecorderRef.current = recorder
+      recorder.start()
+      setRecordSeconds(VOICE_MAX_SECONDS)
+      setRecording(true)
+      timerRef.current = setInterval(() => {
+        setRecordSeconds(s => {
+          if (s <= 1) { stopRecording(true); return VOICE_MAX_SECONDS }
+          return s - 1
+        })
+      }, 1000)
+    } catch {
+      // micro refusé/indisponible — silencieux, l'utilisateur peut toujours écrire
+    }
+  }
+
   async function handleSaveMemory() {
-    if (accumulated.length === 0) return
+    if (pendingItems.length === 0) return
     setSavingMemory(true)
     setMemoryError(null)
     const res = await fetch('/api/memory/confirm', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ entities: accumulated }),
+      body:    JSON.stringify({ writes: pendingItems.map(({ tool, input }) => ({ tool, input })) }),
     })
     const body = await res.json().catch(() => ({})) as { ok?: boolean; error?: string }
     setSavingMemory(false)
     // 207 reste dans la plage 2xx : on s'appuie sur le champ `ok` du corps.
     if (res.ok && body.ok) {
-      setAccumulated([])
-      setAiReady(false)
+      setPendingItems([])
       setMemorySaved(true)
       setDebugOpen(false)
       onAlineaSaved() // rafraîchit la grille
     } else {
       setMemoryError(body.error ?? 'Échec de la mémorisation.')
     }
+  }
+
+  function removePendingItem(index: number) {
+    setPendingItems(prev => prev.filter((_, i) => i !== index))
   }
 
   async function handleSaveDraft() {
@@ -242,6 +318,22 @@ export default function ChatPanel({ context, onboardingStep = 10, onLastMessage,
   return (
     <div className="flex flex-col h-full">
 
+      {/* Bandeau de focus */}
+      {focus && (
+        <div className={[
+          'flex items-center gap-2 px-4 py-1.5 border-b flex-shrink-0 transition-colors duration-300',
+          focusFlash ? 'bg-[#FAF0E4] border-[#E8C9A8]' : 'bg-[#FAF6F0] border-[#F0E8DC]',
+        ].join(' ')}>
+          <span className="text-[11px] text-[#9B5E3A]">🎯</span>
+          <span className="text-[11px] text-[#9B5E3A] font-medium truncate">{focus.label}</span>
+          {onClearFocus && (
+            <button onClick={onClearFocus} className="ml-auto text-[11px] text-[#8C8278] hover:text-[#2C2825] transition-colors">
+              Effacer
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Contexte actif */}
       {ctxLabel && (
         <div className="flex items-center gap-2 px-4 py-1.5 border-b border-[#F0E8DC] bg-[#FAF6F0] flex-shrink-0">
@@ -249,16 +341,15 @@ export default function ChatPanel({ context, onboardingStep = 10, onLastMessage,
         </div>
       )}
 
-      {/* Panneau « Ce que je retiens » — en parallèle, mis à jour au fil des échanges */}
-      {accumulated.length > 0 && (
+      {/* Panneau « Ce que je retiens » — propositions du moteur agentique, en attente de confirmation */}
+      {pendingItems.length > 0 && (
         <div className="flex-shrink-0 border-b border-[#E8E2D9] bg-[#FAF8F4]">
           <button
             onClick={() => setPanelOpen(v => !v)}
             className="w-full flex items-center justify-between px-4 py-2"
           >
             <span className="text-[10px] font-medium tracking-[0.12em] uppercase text-[#8C8278] flex items-center gap-2">
-              Ce que je retiens · {accumulated.length}
-              {extracting && <span className="text-[#C4BDB6] normal-case tracking-normal italic">mise à jour…</span>}
+              Ce que je retiens · {pendingItems.length}
             </span>
             <span className="text-[#C4BDB6] text-[11px]">{panelOpen ? '▾' : '▸'}</span>
           </button>
@@ -266,33 +357,32 @@ export default function ChatPanel({ context, onboardingStep = 10, onLastMessage,
           {panelOpen && (
             <div className="px-4 pb-3 flex flex-col gap-2">
               <ul className="flex flex-col gap-1.5">
-                {accumulated.map((e, i) => (
-                  <li key={i} className="flex items-baseline gap-2 text-[13px] text-[#2C2825]">
-                    <span className="flex-shrink-0">{e.icon}</span>
-                    <span>{e.label}</span>
+                {pendingItems.map((item, i) => (
+                  <li key={i} className="flex items-center gap-2 text-[13px] text-[#2C2825]">
+                    <span className="flex-shrink-0">{item.icon}</span>
+                    <span className="flex-1">{item.label}</span>
+                    <button
+                      onClick={() => removePendingItem(i)}
+                      disabled={savingMemory}
+                      className="flex-shrink-0 text-[#C4BDB6] hover:text-[#B0504A] transition-colors px-1"
+                      aria-label="Retirer"
+                    >
+                      ✕
+                    </button>
                   </li>
                 ))}
               </ul>
-
-              {aiReady && (
-                <p className="text-[11px] text-[#9B5E3A] italic">
-                  Je crois avoir de quoi mémoriser — quand tu veux.
-                </p>
-              )}
 
               <div className="flex items-center gap-2 mt-1">
                 <button
                   onClick={handleSaveMemory}
                   disabled={savingMemory}
-                  className={[
-                    'px-4 py-2 rounded-xl text-[12px] font-medium transition-opacity hover:opacity-85 disabled:opacity-40',
-                    aiReady ? 'bg-[#9B5E3A] text-white' : 'bg-[#2C2825] text-[#FAF8F4]',
-                  ].join(' ')}
+                  className="px-4 py-2 rounded-xl text-[12px] font-medium bg-[#9B5E3A] text-white transition-opacity hover:opacity-85 disabled:opacity-40"
                 >
                   {savingMemory ? 'Mémorisation…' : 'Mémoriser'}
                 </button>
                 <button
-                  onClick={() => { setAccumulated([]); setAiReady(false) }}
+                  onClick={() => setPendingItems([])}
                   disabled={savingMemory}
                   className="px-3 py-2 text-[#8C8278] rounded-xl text-[12px] hover:text-[#2C2825] transition-colors"
                 >
@@ -315,7 +405,7 @@ export default function ChatPanel({ context, onboardingStep = 10, onLastMessage,
 
               {debugOpen && (
                 <pre className="text-[10px] leading-relaxed text-[#8C8278] bg-[#F2EDE5] rounded-lg p-2 overflow-x-auto whitespace-pre-wrap break-all font-mono">
-                  {JSON.stringify(accumulated, null, 2)}
+                  {JSON.stringify(pendingItems, null, 2)}
                 </pre>
               )}
             </div>
@@ -369,28 +459,49 @@ export default function ChatPanel({ context, onboardingStep = 10, onLastMessage,
 
       {/* Saisie */}
       <div className="px-4 py-3 border-t border-[#E6DAC8] flex-shrink-0 bg-white">
-        <div className="flex gap-2">
-          <input
-            ref={inputRef}
-            value={inputVal}
-            disabled={streaming || saving}
-            onChange={e => setInputVal(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && handleSend()}
-            placeholder={
-              streaming ? 'Alinéa écrit…' :
-              draft     ? 'Tu veux ajuster quelque chose ?' :
-                          'Ta réponse…'
-            }
-            className="flex-1 px-4 py-2.5 rounded-xl border border-[#E6DAC8] bg-white text-[14px] text-[#3D2B1A] placeholder-[#8C7565] outline-none focus:border-[#9B5E3A] disabled:opacity-50 transition-colors"
-          />
-          <button
-            onClick={handleSend}
-            disabled={streaming || saving || !inputVal.trim()}
-            className="px-4 py-2.5 bg-[#9B5E3A] text-white rounded-xl text-[13px] font-semibold disabled:opacity-40 transition-opacity"
-          >
-            →
-          </button>
-        </div>
+        {recording ? (
+          <div className="flex items-center gap-3 px-4 py-2.5 rounded-xl border border-[#E6DAC8] bg-[#FAF6F0]">
+            <span className="w-2.5 h-2.5 rounded-full bg-[#CC4444] animate-pulse flex-shrink-0" />
+            <span className="text-[13px] text-[#3D2B1A] max-[640px]:hidden">Enregistrement…</span>
+            <span className="text-[12px] text-[#8C7565] font-mono flex-shrink-0">
+              {String(Math.floor(recordSeconds / 60)).padStart(2, '0')}:{String(recordSeconds % 60).padStart(2, '0')}
+            </span>
+            <button onClick={() => stopRecording(false)} className="ml-auto text-[12px] text-[#8C7565] hover:text-[#3D2B1A]">Annuler</button>
+            <button onClick={() => stopRecording(true)} className="text-[12px] font-semibold text-[#9B5E3A]">Arrêter</button>
+          </div>
+        ) : (
+          <div className="flex gap-2">
+            <button
+              onClick={startRecording}
+              disabled={streaming || saving || transcribing}
+              title="Message vocal"
+              className="px-3 py-2.5 rounded-xl border border-[#E6DAC8] text-[#8C7565] hover:text-[#9B5E3A] hover:border-[#9B5E3A] disabled:opacity-40 transition-colors"
+            >
+              🎙
+            </button>
+            <input
+              ref={inputRef}
+              value={inputVal}
+              disabled={streaming || saving || transcribing}
+              onChange={e => setInputVal(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleSend()}
+              placeholder={
+                transcribing ? 'Transcription…' :
+                streaming    ? 'Alinéa écrit…' :
+                draft        ? 'Tu veux ajuster quelque chose ?' :
+                               'Ta réponse…'
+              }
+              className="flex-1 px-4 py-2.5 rounded-xl border border-[#E6DAC8] bg-white text-[14px] text-[#3D2B1A] placeholder-[#8C7565] outline-none focus:border-[#9B5E3A] disabled:opacity-50 transition-colors"
+            />
+            <button
+              onClick={handleSend}
+              disabled={streaming || saving || transcribing || !inputVal.trim()}
+              className="px-4 py-2.5 bg-[#9B5E3A] text-white rounded-xl text-[13px] font-semibold disabled:opacity-40 transition-opacity"
+            >
+              →
+            </button>
+          </div>
+        )}
       </div>
     </div>
   )

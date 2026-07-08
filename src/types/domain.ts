@@ -1,7 +1,7 @@
 export type ThemeMaturity = 'emerging' | 'active' | 'major' | 'closed'
 export type EventStatus   = 'undocumented' | 'draft' | 'validated'
 export type RelationType  = 'famille' | 'amitié' | 'professionnel' | 'romantique' | 'autre'
-export type FirstMention  = 'onboarding' | 'frise' | 'alinea' | 'manual'
+export type FirstMention  = 'onboarding' | 'frise' | 'alinea' | 'manual' | 'dialogue'
 
 export type PeopleRelationType =
   | 'parent_of'
@@ -69,7 +69,7 @@ export type Alinea = {
   user_id: string
   title: string | null
   content: string | null
-  status: 'draft' | 'validated'
+  status: 'seed' | 'draft' | 'validated'
   event_year: number | null
   life_event_id: string | null // migration 013
   sort_order: number           // migration 013 — ordre dans le life_event
@@ -84,12 +84,31 @@ export type Person = {
   relation: string | null
   relation_type: RelationType | null
   birth_year: number | null
+  birth_month: number | null    // migration 016
+  birth_day: number | null      // migration 016
   is_deceased: boolean
   death_year: number | null
+  death_month: number | null    // migration 016
+  death_day: number | null      // migration 016
+  birth_place: string | null    // migration 016
+  death_place: string | null    // migration 016
   first_mention: FirstMention
   ai_summary: string | null
   alinea_count: number
   pending_qualification: boolean
+  created_at: string
+  updated_at: string
+}
+
+// Lieu de premier rang (migration 016) — remplace le JSONB user_memory.key_places
+// pour tout nouveau lieu capté par le moteur agentique.
+export type Place = {
+  id: string
+  user_id: string
+  name: string
+  region: string | null
+  country: string | null
+  ai_summary: string | null
   created_at: string
   updated_at: string
 }

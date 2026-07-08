@@ -36,7 +36,7 @@ type AlineaRow = {
   event_day: number | null
   location: string | null
   ai_memory: string | null
-  status: 'draft' | 'validated'
+  status: 'seed' | 'draft' | 'validated'
   life_event_id: string | null   // migration 013
   sort_order: number             // migration 013
   created_at: string
@@ -67,8 +67,9 @@ type UserMemoryRow = {
   birth_year: number | null
   portrait: string | null
   default_narrative_style: string
-  key_places: Array<{ name: string; role: string }>          // migration 009
+  key_places: Array<{ name: string; role: string }>          // migration 009 — dépréciée, cf. `places` (migration 016)
   dominant_emotions: Array<{ value: string; context: string }> // migration 009
+  last_consolidation_at: string | null                        // migration 016 — réservé boucle 2 (non utilisé)
   created_at: string
   updated_at: string
 }
@@ -136,14 +137,51 @@ type PersonRow = {
   relation: string | null
   relation_type: 'famille' | 'amitié' | 'professionnel' | 'romantique' | 'autre' | null
   birth_year: number | null
+  birth_month: number | null    // migration 016
+  birth_day: number | null      // migration 016
   is_deceased: boolean
   death_year: number | null
+  death_month: number | null    // migration 016
+  death_day: number | null      // migration 016
+  birth_place: string | null    // migration 016
+  death_place: string | null    // migration 016
   first_mention: 'onboarding' | 'frise' | 'alinea' | 'manual' | 'dialogue'
   ai_summary: string | null
   alinea_count: number   // maintenu par trigger
   pending_qualification: boolean
   created_at: string
   updated_at: string
+}
+
+type PlaceRow = {              // migration 016
+  id: string
+  user_id: string
+  name: string
+  region: string | null
+  country: string | null
+  ai_summary: string | null
+  created_at: string
+  updated_at: string
+}
+
+type AlineaPlaceRow = {        // migration 016
+  alinea_id: string
+  place_id: string
+}
+
+type LifeEventPlaceRow = {     // migration 016
+  life_event_id: string
+  place_id: string
+}
+
+type ReviewQueueRow = {        // migration 016
+  id: string
+  user_id: string
+  entity_type: string
+  description: string
+  payload: Record<string, unknown>
+  status: 'pending' | 'resolved'
+  created_at: string
 }
 
 type PersonRelationRow = {
@@ -221,7 +259,7 @@ export type Database = {
           event_month?: number | null
           event_day?: number | null
           location?: string | null
-          status?: 'draft' | 'validated'
+          status?: 'seed' | 'draft' | 'validated'
           life_event_id?: string | null
           sort_order?: number
         }
@@ -238,6 +276,7 @@ export type Database = {
           default_narrative_style?: string
           key_places?: Array<{ name: string; role: string }>
           dominant_emotions?: Array<{ value: string; context: string }>
+          last_consolidation_at?: string | null
         }
         Update: Partial<Omit<UserMemoryRow, 'id' | 'user_id' | 'created_at' | 'updated_at'>>
         Relationships: []
@@ -302,14 +341,58 @@ export type Database = {
           relation?: string | null
           relation_type?: string | null
           birth_year?: number | null
+          birth_month?: number | null
+          birth_day?: number | null
           is_deceased?: boolean
           death_year?: number | null
+          death_month?: number | null
+          death_day?: number | null
+          birth_place?: string | null
+          death_place?: string | null
           first_mention?: string
           ai_summary?: string | null
           alinea_count?: number
           pending_qualification?: boolean
         }
         Update: Partial<Omit<PersonRow, 'id' | 'user_id' | 'created_at' | 'updated_at'>>
+        Relationships: []
+      }
+      places: {
+        Row: PlaceRow
+        Insert: {
+          user_id: string
+          name: string
+          id?: string
+          region?: string | null
+          country?: string | null
+          ai_summary?: string | null
+        }
+        Update: Partial<Omit<PlaceRow, 'id' | 'user_id' | 'created_at' | 'updated_at'>>
+        Relationships: []
+      }
+      alinea_places: {
+        Row: AlineaPlaceRow
+        Insert: AlineaPlaceRow
+        Update: Record<string, unknown>
+        Relationships: []
+      }
+      life_event_places: {
+        Row: LifeEventPlaceRow
+        Insert: LifeEventPlaceRow
+        Update: Record<string, unknown>
+        Relationships: []
+      }
+      review_queue: {
+        Row: ReviewQueueRow
+        Insert: {
+          user_id: string
+          entity_type: string
+          description: string
+          id?: string
+          payload?: Record<string, unknown>
+          status?: 'pending' | 'resolved'
+        }
+        Update: Partial<Omit<ReviewQueueRow, 'id' | 'user_id' | 'created_at'>>
         Relationships: []
       }
       people_relations: {

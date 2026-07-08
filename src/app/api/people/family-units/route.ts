@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { deriveFamilyUnitRelations } from '@/lib/agent/tools'
 
 type Child = { person_id: string; link_type: string }
 
@@ -58,56 +59,12 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Auto-derive people_relations
-  const relationRows: Array<{
-    user_id: string
-    person_a_id: string
-    person_b_id: string
-    relation_type: string
-    is_symmetric: boolean
-    qualifier: null
-    family_unit_id: string
-    confirmed: boolean
-    declared_in: string
-  }> = []
-
-  const base = {
-    user_id: user.id,
-    qualifier: null,
-    family_unit_id: unit_id,
-    confirmed: true,
-    declared_in: 'manual',
-  }
-
+  // Auto-derive people_relations (parent ↔ enfant, fratrie, conjoints)
   const childIds = children.map(c => c.person_id)
-
-  // Parent ↔ child relations
-  for (const parentId of parents) {
-    for (const childId of childIds) {
-      relationRows.push(
-        { ...base, person_a_id: parentId, person_b_id: childId, relation_type: 'parent_of', is_symmetric: false },
-        { ...base, person_a_id: childId, person_b_id: parentId, relation_type: 'child_of', is_symmetric: false },
-      )
-    }
-  }
-
-  // Sibling relations (all pairs of children)
-  for (let i = 0; i < childIds.length; i++) {
-    for (let j = i + 1; j < childIds.length; j++) {
-      relationRows.push(
-        { ...base, person_a_id: childIds[i], person_b_id: childIds[j], relation_type: 'sibling_of', is_symmetric: true },
-        { ...base, person_a_id: childIds[j], person_b_id: childIds[i], relation_type: 'sibling_of', is_symmetric: true },
-      )
-    }
-  }
-
-  // Partner relation (if both parents)
-  if (parent_1_id && parent_2_id) {
-    relationRows.push(
-      { ...base, person_a_id: parent_1_id, person_b_id: parent_2_id, relation_type: 'partner_of', is_symmetric: true },
-      { ...base, person_a_id: parent_2_id, person_b_id: parent_1_id, relation_type: 'partner_of', is_symmetric: true },
-    )
-  }
+  const relationRows = deriveFamilyUnitRelations(
+    { user_id: user.id, confirmed: true, declared_in: 'manual' },
+    unit_id, parents, childIds,
+  )
 
   if (relationRows.length > 0) {
     const { error: relError } = await supabase
