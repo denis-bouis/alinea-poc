@@ -66,8 +66,13 @@ export default function EditAlineaPage() {
   const [draft, setDraft] = useState<AlineaDraft | null>(null)
   const [existingContent, setExistingContent] = useState('')
   const [aiMemory, setAiMemory] = useState<string | null>(null)
+  const [originalAiMemory, setOriginalAiMemory] = useState<string | null>(null)
+  // Modifier la mémoire IA est sensible : premier clic sur Enregistrer affiche
+  // un avertissement, il faut confirmer une seconde fois pour appliquer.
+  const [pendingAiConfirm, setPendingAiConfirm] = useState(false)
   const chatEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const aiMemoryRef = useRef<HTMLTextAreaElement>(null)
 
   const [title, setTitle] = useState('')
   const [content, setContent] = useState('')
@@ -98,12 +103,13 @@ export default function EditAlineaPage() {
         .eq('id', id)
         .single()
 
-      if (error || !data) { router.push('/timeline'); return }
+      if (error || !data) { router.push('/tableau'); return }
 
       setTitle(data.title ?? '')
       setContent(data.content ?? '')
       setExistingContent(data.content ?? '')
       setAiMemory(data.ai_memory ?? null)
+      setOriginalAiMemory(data.ai_memory ?? null)
       setApproximateDate(data.approximate_date ?? '')
       setEventYear(data.event_year ?? '')
       setEventMonth(data.event_month ?? '')
@@ -125,6 +131,10 @@ export default function EditAlineaPage() {
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  useEffect(() => {
+    if (aiMemoryRef.current) autoResize(aiMemoryRef.current)
+  }, [aiMemory])
 
   async function sendToAI(history: Message[], currentExistingContent?: string) {
     setStreaming(true)
@@ -245,6 +255,8 @@ export default function EditAlineaPage() {
   async function handleSave(e: React.FormEvent) {
     e.preventDefault()
     if (!content.trim()) return
+    const aiChanged = aiMemory !== originalAiMemory
+    if (aiChanged && !pendingAiConfirm) { setPendingAiConfirm(true); return }
     setSaving(true)
     const { error } = await supabase.from('alineas').update({
       title: title || null,
@@ -258,7 +270,7 @@ export default function EditAlineaPage() {
       event_day: eventDay !== '' ? eventDay : null,
       ai_memory: aiMemory ?? null,
     }).eq('id', id)
-    if (!error) router.push('/timeline')
+    if (!error) router.push('/tableau')
     setSaving(false)
   }
 
@@ -419,6 +431,21 @@ export default function EditAlineaPage() {
           </Field>
         </div>
 
+        <Field label="Mémoire IA">
+          <textarea
+            ref={aiMemoryRef}
+            value={aiMemory ?? ''}
+            onChange={(e) => { setAiMemory(e.target.value || null); setPendingAiConfirm(false); autoResize(e.target) }}
+            rows={3}
+            className="w-full bg-cream border border-border rounded-xl px-4 py-3 text-ink text-sm focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent transition-colors resize-none overflow-hidden"
+          />
+          {pendingAiConfirm && (
+            <p className="mt-2 text-xs text-accent bg-accent/10 border border-accent/30 rounded-lg px-3 py-2">
+              Tu modifies ce que l&apos;IA a compris de cet alinéa — clique à nouveau sur Sauvegarder pour confirmer.
+            </p>
+          )}
+        </Field>
+
         <Field label="Visibilité">
           <div className="space-y-2.5">
             {VISIBILITIES.map((v) => (
@@ -451,7 +478,7 @@ export default function EditAlineaPage() {
             disabled={saving || !content.trim()}
             className="flex-1 bg-accent text-cream rounded-full px-4 py-3 text-sm font-semibold hover:bg-accent-dk disabled:opacity-50 transition-colors"
           >
-            {saving ? 'Enregistrement…' : 'Sauvegarder'}
+            {saving ? 'Enregistrement…' : pendingAiConfirm ? 'Confirmer la modification' : 'Sauvegarder'}
           </button>
         </div>
       </form>

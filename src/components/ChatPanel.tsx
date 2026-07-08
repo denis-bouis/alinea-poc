@@ -44,15 +44,48 @@ function parsePending(text: string): PendingItem[] {
   } catch { return [] }
 }
 
+type ConfirmedResult = { tool: string; label: string; saved: boolean; error?: string }
+
+function parseConfirmed(text: string): ConfirmedResult[] | null {
+  const m = text.match(/```memory-confirmed\n([\s\S]*?)\n```/)
+  if (!m) return null
+  try {
+    const parsed = JSON.parse(m[1])
+    return Array.isArray(parsed) ? parsed as ConfirmedResult[] : null
+  } catch { return null }
+}
+
+type FocusSignal = { action: 'set'; type: EntityRef['type']; id: string; label: string } | { action: 'clear' }
+
+function parseFocusSignal(text: string): FocusSignal | null {
+  const m = text.match(/```focus-signal\n([\s\S]*?)\n```/)
+  if (!m) return null
+  try { return JSON.parse(m[1]) as FocusSignal } catch { return null }
+}
+
+// Filet de sécurité si le modèle confirme en texte sans appeler l'outil
+// confirm_pending_writes — ne couvre que les confirmations courtes et non
+// ambiguës, jamais une phrase plus longue (laisse le modèle décider du reste).
+const SIMPLE_CONFIRMATIONS = new Set([
+  'oui', 'ok', 'okay', "d'accord", 'daccord', 'parfait', "c'est parfait", 'top',
+  'vas-y', 'vasy', 'exact', 'carrément', 'carrement', 'nickel', 'yes', 'yep', 'confirmé', 'confirme',
+])
+
+function isSimpleConfirmation(text: string): boolean {
+  return SIMPLE_CONFIRMATIONS.has(text.trim().toLowerCase().replace(/[!.?]+$/, ''))
+}
+
 function stripSignals(text: string): string {
   return text
     .replace(/```alinea-draft[\s\S]*?```/, '')
     .replace(/```memory-pending[\s\S]*?```/, '')
+    .replace(/```memory-confirmed[\s\S]*?```/, '')
+    .replace(/```focus-signal[\s\S]*?```/, '')
     .trim()
 }
 
 function contextToSeed(ctx: ChatContext): string {
-  if (ctx.type === 'event') return `Je veux raconter l'événement : ${ctx.event.title} (${ctx.event.year})`
+  if (ctx.type === 'event') return `Je veux raconter l'événement : ${ctx.event.title} (${ctx.event.year ?? 'à dater'})`
   if (ctx.type === 'theme') return `Je veux explorer la thématique : ${ctx.theme.name}`
   return 'Commence'
 }
@@ -63,10 +96,11 @@ type Props = {
   onLastMessage:  (msg: string) => void
   onAlineaSaved:  () => void
   focus?:         EntityRef | null
+  onSetFocus?:    (ref: EntityRef) => void
   onClearFocus?:  () => void
 }
 
-export default function ChatPanel({ context, onboardingStep = 10, onLastMessage, onAlineaSaved, focus, onClearFocus }: Props) {
+export default function ChatPanel({ context, onboardingStep = 10, onLastMessage, onAlineaSaved, focus, onSetFocus, onClearFocus }: Props) {
   const [messages,       setMessages]       = useState<Message[]>([])
   const [apiMessages,    setApiMessages]    = useState<ApiMessage[]>([])
   const [inputVal,       setInputVal]       = useState('')
@@ -86,10 +120,13 @@ export default function ChatPanel({ context, onboardingStep = 10, onLastMessage,
   const [transcribing,   setTranscribing]   = useState(false)
 
   const msgsRef  = useRef<HTMLDivElement>(null)
-  const inputRef = useRef<HTMLInputElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef        = useRef<Blob[]>([])
   const timerRef         = useRef<ReturnType<typeof setInterval> | null>(null)
+  // Lu dans sendToAI (closure figée par useCallback) — évite de recréer le
+  // callback à chaque proposition/retrait pour rester en phase avec le state.
+  const pendingItemsRef  = useRef<PendingItem[]>([])
 
   // Flash bref du bandeau de focus à chaque changement
   useEffect(() => {
@@ -105,22 +142,51 @@ export default function ChatPanel({ context, onboardingStep = 10, onLastMessage,
     mediaRecorderRef.current?.stream.getTracks().forEach(t => t.stop())
   }, [])
 
+  useEffect(() => { pendingItemsRef.current = pendingItems }, [pendingItems])
+
+  // Composer auto-grow : la hauteur suit le contenu (bornée par max-h-40 en CSS).
+  useEffect(() => {
+    const el = inputRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${el.scrollHeight}px`
+  }, [inputVal])
+
   const scrollDown = useCallback(() => {
     setTimeout(() => msgsRef.current?.scrollTo({ top: msgsRef.current.scrollHeight, behavior: 'smooth' }), 50)
   }, [])
 
-  const sendToAI = useCallback(async (msgs: ApiMessage[]) => {
+  const sendToAI = useCallback(async (msgs: ApiMessage[]): Promise<boolean> => {
     setStreaming(true)
+    // "Noté ✓" est un accusé de réception ponctuel du tour où la confirmation a
+    // eu lieu — sans reset ici, il reste affiché indéfiniment tant qu'aucune
+    // nouvelle proposition n'arrive (rare désormais, cf. règle 11).
+    setMemorySaved(false)
     let buffer = ''
+    let confirmedThisTurn = false
     setMessages(prev => [...prev, { role: 'ai', text: '' }])
+
+    function showError(msg: string) {
+      setMessages(prev => {
+        const copy = [...prev]
+        copy[copy.length - 1] = { role: 'ai', text: msg }
+        return copy
+      })
+    }
 
     try {
       const res = await fetch('/api/chat', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ messages: msgs }),
+        body:    JSON.stringify({
+          messages: msgs,
+          pendingWrites: pendingItemsRef.current.map(({ tool, input }) => ({ tool, input })),
+        }),
       })
-      if (!res.body) return
+      if (!res.ok || !res.body) {
+        showError('⚠️ Alinéa ne répond pas pour le moment — réessaie dans un instant.')
+        return false
+      }
 
       const reader  = res.body.getReader()
       const decoder = new TextDecoder()
@@ -134,6 +200,14 @@ export default function ChatPanel({ context, onboardingStep = 10, onLastMessage,
           return copy
         })
         scrollDown()
+      }
+
+      // Un tour peut légitimement ne produire qu'un appel d'outil (confirmation,
+      // focus) sans texte visible une fois les blocs de signal retirés — seul un
+      // buffer totalement vide (rien reçu du tout) signale un vrai échec.
+      if (!buffer) {
+        showError('⚠️ Alinéa ne répond pas pour le moment — réessaie dans un instant.')
+        return false
       }
 
       const foundDraft = parseDraft(buffer)
@@ -161,11 +235,39 @@ export default function ChatPanel({ context, onboardingStep = 10, onLastMessage,
         })
         setMemorySaved(false)
       }
+
+      // Confirmation orale du lot en attente (outil confirm_pending_writes,
+      // cf. /api/chat) — même effet que le clic sur "Mémoriser".
+      const confirmed = parseConfirmed(buffer)
+      if (confirmed && confirmed.length > 0) {
+        confirmedThisTurn = true
+        const failed = confirmed.filter(r => !r.saved)
+        setPendingItems([])
+        if (failed.length > 0) {
+          setMemoryError(failed.map(f => `${f.label}: ${f.error ?? 'échec'}`).join(' · '))
+        } else {
+          setMemorySaved(true)
+          onAlineaSaved()
+        }
+      }
+
+      // Focus posé/effacé oralement (outils set_focus/clear_focus) — même
+      // effet que le clic 🎯 ou le bouton "Effacer" du bandeau.
+      const focusSig = parseFocusSignal(buffer)
+      if (focusSig) {
+        if (focusSig.action === 'set') onSetFocus?.({ type: focusSig.type, id: focusSig.id, label: focusSig.label })
+        else onClearFocus?.()
+      }
+
+      return confirmedThisTurn
+    } catch {
+      showError('⚠️ Alinéa ne répond pas pour le moment — réessaie dans un instant.')
+      return false
     } finally {
       setStreaming(false)
       setTimeout(() => inputRef.current?.focus(), 100)
     }
-  }, [scrollDown, onLastMessage])
+  }, [scrollDown, onLastMessage, onAlineaSaved, onSetFocus, onClearFocus])
 
   // Démarrage de la conversation au montage du composant
   useEffect(() => {
@@ -181,6 +283,15 @@ export default function ChatPanel({ context, onboardingStep = 10, onLastMessage,
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Si le message est une confirmation courte et sans ambiguïté et que le
+  // modèle n'a pas appelé confirm_pending_writes lui-même, on déclenche quand
+  // même la mémorisation via le chemin éprouvé du bouton "Mémoriser".
+  function maybeFallbackConfirm(text: string, confirmedByAgent: boolean) {
+    if (!confirmedByAgent && pendingItemsRef.current.length > 0 && isSimpleConfirmation(text)) {
+      handleSaveMemory()
+    }
+  }
+
   const handleSend = useCallback(async () => {
     const text = inputVal.trim()
     if (!text || streaming || saving) return
@@ -190,7 +301,8 @@ export default function ChatPanel({ context, onboardingStep = 10, onLastMessage,
     setMessages(prev => [...prev, { role: 'user', text }])
     setApiMessages(newMsgs)
     scrollDown()
-    await sendToAI(newMsgs)
+    const confirmedByAgent = await sendToAI(newMsgs)
+    maybeFallbackConfirm(text, confirmedByAgent)
   }, [inputVal, streaming, saving, apiMessages, sendToAI, scrollDown])
 
   const sendVoiceMessage = useCallback(async (blob: Blob) => {
@@ -207,7 +319,8 @@ export default function ChatPanel({ context, onboardingStep = 10, onLastMessage,
       setMessages(prev => [...prev, { role: 'user', text }])
       setApiMessages(newMsgs)
       scrollDown()
-      await sendToAI(newMsgs)
+      const confirmedByAgent = await sendToAI(newMsgs)
+      maybeFallbackConfirm(text, confirmedByAgent)
     } finally {
       setTranscribing(false)
     }
@@ -310,7 +423,7 @@ export default function ChatPanel({ context, onboardingStep = 10, onLastMessage,
   }
 
   const ctxLabel = context?.type === 'event'
-    ? `${context.event.title} · ${context.event.year}`
+    ? `${context.event.title} · ${context.event.year ?? 'à dater'}`
     : context?.type === 'theme'
     ? context.theme.name
     : null
@@ -479,19 +592,22 @@ export default function ChatPanel({ context, onboardingStep = 10, onLastMessage,
             >
               🎙
             </button>
-            <input
+            <textarea
               ref={inputRef}
               value={inputVal}
+              rows={1}
               disabled={streaming || saving || transcribing}
               onChange={e => setInputVal(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleSend()}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() }
+              }}
               placeholder={
                 transcribing ? 'Transcription…' :
                 streaming    ? 'Alinéa écrit…' :
                 draft        ? 'Tu veux ajuster quelque chose ?' :
                                'Ta réponse…'
               }
-              className="flex-1 px-4 py-2.5 rounded-xl border border-[#E6DAC8] bg-white text-[14px] text-[#3D2B1A] placeholder-[#8C7565] outline-none focus:border-[#9B5E3A] disabled:opacity-50 transition-colors"
+              className="flex-1 px-4 py-2.5 rounded-xl border border-[#E6DAC8] bg-white text-[14px] text-[#3D2B1A] placeholder-[#8C7565] outline-none focus:border-[#9B5E3A] disabled:opacity-50 transition-colors resize-none leading-snug max-h-40 overflow-y-auto"
             />
             <button
               onClick={handleSend}

@@ -171,7 +171,7 @@ export default function FriseSVG({ themes, events, birthYear, onEventClick }: Pr
           .map(id => FM.top + themes.findIndex(t => t.id === id) * (BAND_H + BAND_GAP) + BAND_H / 2)
           .sort((a, b) => a - b)
         zoomG.append('line')
-          .attr('x1', yearX(ev.year)).attr('x2', yearX(ev.year))
+          .attr('x1', yearX(ev.year ?? birthYear)).attr('x2', yearX(ev.year ?? birthYear))
           .attr('y1', ys[0]).attr('y2', ys[ys.length - 1])
           .attr('stroke', '#CECECE').attr('stroke-width', 1.5).attr('stroke-dasharray', '2,3')
       })
@@ -189,7 +189,7 @@ export default function FriseSVG({ themes, events, birthYear, onEventClick }: Pr
     themes.forEach((theme, i) => {
       const bY = FM.top + i * (BAND_H + BAND_GAP)
       events.filter(ev => (ev.theme_ids ?? []).includes(theme.id)).forEach(ev => {
-        evPositions.push({ ev, cx: yearX(ev.year), cy: bY + BAND_H / 2 })
+        evPositions.push({ ev, cx: yearX(ev.year ?? birthYear), cy: bY + BAND_H / 2 })
       })
     })
 
@@ -238,9 +238,9 @@ export default function FriseSVG({ themes, events, birthYear, onEventClick }: Pr
     themes.forEach((theme, i) => {
       const bY = FM.top + i * (BAND_H + BAND_GAP)
       events.filter(ev => (ev.theme_ids ?? []).includes(theme.id)).forEach(ev => {
-        const cx       = yearX(ev.year)
+        const cx       = yearX(ev.year ?? birthYear)
         const cy       = bY + BAND_H / 2
-        const preBirth = ev.year < birthYear
+        const preBirth = (ev.year ?? birthYear) < birthYear
         const status   = ev.status
         const fillOpacity = status === 'draft' ? 0.55 : status === 'validated' ? 1 : 0
         const eG = zoomG.append('g')

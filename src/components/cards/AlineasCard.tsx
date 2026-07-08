@@ -23,6 +23,7 @@ type Props = {
   fullscreen:   boolean
   onToggleFullscreen: () => void
   onOpen:       (ref: EntityRef) => void
+  onFocus:      (ref: EntityRef) => void
 }
 
 const STATUS_LABEL: Record<AlineaListItem['status'], string> = {
@@ -30,31 +31,44 @@ const STATUS_LABEL: Record<AlineaListItem['status'], string> = {
 }
 
 export default function AlineasCard({
-  alineas, themes, visibleIds, highlightId, collapsed, onToggleCollapse, fullscreen, onToggleFullscreen, onOpen,
+  alineas, themes, visibleIds, highlightId, collapsed, onToggleCollapse, fullscreen, onToggleFullscreen, onOpen, onFocus,
 }: Props) {
   const shown = visibleIds ? alineas.filter(a => visibleIds.has(a.id)) : alineas
 
   return (
-    <CardShell title="Alinéas" count={alineas.length} collapsed={collapsed} onToggleCollapse={onToggleCollapse}
+    <CardShell title="Alinéas" count={shown.length} totalCount={alineas.length} collapsed={collapsed} onToggleCollapse={onToggleCollapse}
                fullscreen={fullscreen} onToggleFullscreen={onToggleFullscreen}>
       <div className="flex flex-col">
         {shown.length === 0 ? (
-          <p className="text-[12px] text-[#8C8278] italic px-4 py-3">Aucun alinéa pour l&apos;instant.</p>
+          <p className="text-[12px] text-[#8C8278] italic px-4 py-3">
+            {alineas.length > 0 ? 'Aucun alinéa pour ce focus.' : 'Aucun alinéa pour l’instant.'}
+          </p>
         ) : shown.map(a => {
           const color = themes.find(t => a.theme_ids.includes(t.id))?.color ?? '#C4BDB6'
           return (
-            <button
+            <div
               key={a.id}
-              onClick={() => onOpen({ type: 'alinea', id: a.id, label: a.title ?? 'Sans titre' })}
               className={[
-                'flex items-center justify-between gap-2 pl-3 pr-4 py-2 text-left hover:bg-[#FAF6F0] transition-colors border-b border-[#F2EDE5] last:border-0 border-l-[3px]',
+                'group flex items-center border-b border-[#F2EDE5] last:border-0 border-l-[3px]',
                 a.id === highlightId ? 'bg-[#FAF0E4]' : '',
               ].join(' ')}
               style={{ borderLeftColor: color }}
             >
-              <span className="text-[13px] text-[#2C2825] truncate">{a.title ?? 'Sans titre'}</span>
-              <span className="text-[11px] text-[#8C8278] flex-shrink-0">{STATUS_LABEL[a.status]}</span>
-            </button>
+              <button
+                onClick={() => onOpen({ type: 'alinea', id: a.id, label: a.title ?? 'Sans titre' })}
+                className="flex-1 min-w-0 flex items-center justify-between gap-2 pl-3 pr-4 py-2 text-left hover:bg-[#FAF6F0] transition-colors"
+              >
+                <span className="text-[13px] text-[#2C2825] truncate">{a.title ?? 'Sans titre'}</span>
+                <span className="text-[11px] text-[#8C8278] flex-shrink-0">{STATUS_LABEL[a.status]}</span>
+              </button>
+              <button
+                onClick={() => onFocus({ type: 'alinea', id: a.id, label: a.title ?? 'Sans titre' })}
+                title="Mettre le focus ici"
+                className="flex-shrink-0 px-2 text-[#C4BDB6] hover:text-[#9B5E3A] opacity-0 group-hover:opacity-100 transition-opacity"
+              >
+                🎯
+              </button>
+            </div>
           )
         })}
       </div>

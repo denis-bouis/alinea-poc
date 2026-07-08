@@ -12,7 +12,16 @@ type Props = {
   collapsedPhaseIds: Set<string>
   onTogglePhase:     (id: string) => void
   onEventClick:      (e: LifeEvent) => void
+  onEventFocus:      (e: LifeEvent) => void
   fullscreen?:       boolean
+}
+
+type BandEvent = {
+  event:    LifeEvent
+  // true = rattaché par recoupement de date (fallback d'affichage), pas par un
+  // life_phase_id explicite — distinction affichée pour ne pas laisser croire
+  // à un rattachement éditorial voulu (cf. remarque de test 13b).
+  inferred: boolean
 }
 
 type Band = {
@@ -20,20 +29,31 @@ type Band = {
   phase:  LifePhase | null
   color:  string
   current: boolean   // phase en cours (pas de borne de fin) — affichée en haut
-  events: LifeEvent[]
+  events: BandEvent[]
 }
 
+// Les événements sans année (à dater) sont triés en tête, aux côtés des plus
+// récents — pas de position "vraie" possible sans date, autant les garder visibles.
 function eventDate(e: LifeEvent): number {
+  if (e.year == null) return Infinity
   return e.year * 10000 + (e.event_month ?? 0) * 100 + (e.event_day ?? 0)
 }
 
+function formatEventYear(e: LifeEvent): string {
+  if (e.year == null) return 'à dater'
+  if (e.year_end != null && e.year_end !== e.year) return `${e.year}–${e.year_end}`
+  return String(e.year)
+}
+
 export default function FriseVerticale({
-  phases, themes, events, birthYear, collapsedPhaseIds, onTogglePhase, onEventClick, fullscreen = false,
+  phases, themes, events, birthYear, collapsedPhaseIds, onTogglePhase, onEventClick, onEventFocus, fullscreen = false,
 }: Props) {
 
-  const vecue    = useMemo(() => events.filter(e => e.year >= birthYear), [events, birthYear])
+  // Un événement sans année n'est pas datable comme antérieur à la naissance —
+  // il reste dans la vie "vécue" (affiché, plutôt que silencieusement écarté).
+  const vecue    = useMemo(() => events.filter(e => e.year == null || e.year >= birthYear), [events, birthYear])
   const transmise = useMemo(
-    () => [...events.filter(e => e.year < birthYear)].sort((a, b) => eventDate(b) - eventDate(a)),
+    () => [...events.filter(e => e.year != null && e.year < birthYear)].sort((a, b) => eventDate(b) - eventDate(a)),
     [events, birthYear],
   )
 
@@ -46,22 +66,26 @@ export default function FriseVerticale({
     if (sorted.length === 0) {
       return [{
         key: 'all', phase: null, color: phaseColor(0), current: true,
-        events: [...vecue].sort((a, b) => eventDate(b) - eventDate(a)),
+        events: [...vecue].sort((a, b) => eventDate(b) - eventDate(a)).map(event => ({ event, inferred: false })),
       }]
     }
 
     const used = new Set<string>()
     const result: Band[] = sorted.map((phase, i) => {
-      const inPhase = vecue.filter((e) => {
-        if (e.life_phase_id) return e.life_phase_id === phase.id
-        if (phase.year_start == null) return false
-        const end = phase.year_end ?? 9999
-        return e.year >= phase.year_start && e.year <= end
-      })
-      inPhase.forEach((e) => used.add(e.id))
+      const inPhase = vecue
+        .filter((e) => {
+          if (e.life_phase_id) return e.life_phase_id === phase.id
+          // Sans année, aucun recoupement de date possible — l'événement ne
+          // peut rejoindre une bande que via un rattachement explicite.
+          if (e.year == null || phase.year_start == null) return false
+          const end = phase.year_end ?? 9999
+          return e.year >= phase.year_start && e.year <= end
+        })
+        .map(event => ({ event, inferred: event.life_phase_id !== phase.id }))
+      inPhase.forEach(({ event }) => used.add(event.id))
       return {
         key: phase.id, phase, color: phaseColor(phases.indexOf(phase)), current: phase.year_end == null,
-        events: inPhase.sort((a, b) => eventDate(b) - eventDate(a)),
+        events: inPhase.sort((a, b) => eventDate(b.event) - eventDate(a.event)),
       }
     })
 
@@ -69,7 +93,7 @@ export default function FriseVerticale({
     if (orphans.length > 0) {
       result.unshift({
         key: 'orphans', phase: null, color: '#C4BDB6', current: true,
-        events: orphans.sort((a, b) => eventDate(b) - eventDate(a)),
+        events: orphans.sort((a, b) => eventDate(b) - eventDate(a)).map(event => ({ event, inferred: false })),
       })
     }
     return result
@@ -118,8 +142,8 @@ export default function FriseVerticale({
         ) : (
           <div className="flex flex-col py-1.5 pl-3 pr-3 relative">
             <div className="absolute left-[19px] top-0 bottom-0 w-px bg-[#E0D8CC]" />
-            {band.events.map(e => (
-              <EventRow key={e.id} event={e} diamond={diamond} {...eventThemeColors(e)} onClick={() => onEventClick(e)} />
+            {band.events.map(({ event: e, inferred }) => (
+              <EventRow key={e.id} event={e} diamond={diamond} inferred={inferred} {...eventThemeColors(e)} onClick={() => onEventClick(e)} onFocus={() => onEventFocus(e)} />
             ))}
           </div>
         )}
@@ -156,7 +180,7 @@ export default function FriseVerticale({
             <div className="absolute left-[19px] top-0 bottom-0 w-px bg-[#E0D8CC]" />
             <p className="text-[10px] tracking-[0.06em] uppercase text-[#8C8278] mb-1 pl-6">Mémoire transmise</p>
             {transmise.map(e => (
-              <EventRow key={e.id} event={e} diamond {...eventThemeColors(e)} onClick={() => onEventClick(e)} />
+              <EventRow key={e.id} event={e} diamond inferred={false} {...eventThemeColors(e)} onClick={() => onEventClick(e)} onFocus={() => onEventFocus(e)} />
             ))}
           </div>
         )}
@@ -168,13 +192,15 @@ export default function FriseVerticale({
 }
 
 function EventRow({
-  event, diamond, primary, secondary, onClick,
+  event, diamond, inferred, primary, secondary, onClick, onFocus,
 }: {
   event: LifeEvent
   diamond: boolean
+  inferred: boolean
   primary: string | null
   secondary: string | null
   onClick: () => void
+  onFocus: () => void
 }) {
   const color = primary ?? '#9B5E3A'
   const shapeClass = diamond ? 'rotate-45 rounded-[3px]' : 'rounded-full'
@@ -189,21 +215,33 @@ function EventRow({
   }
 
   return (
-    <button
-      onClick={onClick}
-      className="group flex items-center gap-2.5 w-full text-left py-1 hover:bg-black/[0.02] rounded-md transition-colors"
-    >
-      <span className="relative flex-shrink-0 flex items-center justify-center" style={{ width: 18 }}>
-        <span className={shapeClass} style={dotStyle} />
-        {secondary && (
-          <span
-            className="absolute rounded-full"
-            style={{ width: 5, height: 5, background: secondary, right: -1, bottom: -1, boxShadow: '0 0 0 1.5px #FAF8F4' }}
-          />
-        )}
-      </span>
-      <span className="text-[13px] text-[#2C2825] truncate flex-1">{event.title}</span>
-      <span className="text-[10px] text-[#8C8278] flex-shrink-0">{event.year}</span>
-    </button>
+    <div className="group flex items-center gap-1 w-full rounded-md hover:bg-black/[0.02] transition-colors">
+      <button
+        onClick={onClick}
+        title={inferred ? 'Classé ici par recoupement de date — pas rattaché explicitement à cette phase' : undefined}
+        className="flex items-center gap-2.5 flex-1 min-w-0 text-left py-1"
+      >
+        <span className="relative flex-shrink-0 flex items-center justify-center" style={{ width: 18 }}>
+          <span className={shapeClass} style={dotStyle} />
+          {secondary && (
+            <span
+              className="absolute rounded-full"
+              style={{ width: 5, height: 5, background: secondary, right: -1, bottom: -1, boxShadow: '0 0 0 1.5px #FAF8F4' }}
+            />
+          )}
+        </span>
+        <span className="text-[13px] text-[#2C2825] truncate flex-1">{event.title}</span>
+        <span className={['text-[10px] flex-shrink-0', (inferred || event.year == null) ? 'text-[#C4BDB6] italic' : 'text-[#8C8278]'].join(' ')}>
+          {inferred && event.year != null ? '~' : ''}{formatEventYear(event)}
+        </span>
+      </button>
+      <button
+        onClick={onFocus}
+        title="Mettre le focus ici"
+        className="flex-shrink-0 px-1.5 text-[#C4BDB6] hover:text-[#9B5E3A] opacity-0 group-hover:opacity-100 transition-opacity"
+      >
+        🎯
+      </button>
+    </div>
   )
 }

@@ -27,15 +27,14 @@ export async function proxy(request: NextRequest) {
 
   const { data: { user } } = await supabase.auth.getUser()
 
-  const isAppRoute = request.nextUrl.pathname.startsWith('/timeline') ||
-    request.nextUrl.pathname.startsWith('/alinea')
+  const isAppRoute = request.nextUrl.pathname.startsWith('/alinea')
 
   if (!user && isAppRoute) {
     return NextResponse.redirect(new URL('/login', request.url))
   }
 
   if (user && request.nextUrl.pathname === '/login') {
-    return NextResponse.redirect(new URL('/timeline', request.url))
+    return NextResponse.redirect(new URL('/tableau', request.url))
   }
 
   return supabaseResponse

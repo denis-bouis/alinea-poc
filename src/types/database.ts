@@ -89,15 +89,19 @@ type ThemeRow = {
 type LifeEventRow = {
   id: string
   user_id: string
-  year: number
+  year: number | null            // migration 019 — nullable, "à dater"
   event_month: number | null     // migration 013
   event_day: number | null       // migration 013
+  year_end: number | null        // migration 019 — événement sur une période
+  event_month_end: number | null // migration 019
+  event_day_end: number | null   // migration 019
   life_phase_id: string | null    // migration 013
   title: string
   status: 'undocumented' | 'draft' | 'validated'
   documented: boolean            // migration 013
   is_pivot: boolean              // migration 009
   emotional_intensity: number    // migration 009 — 0 à 3
+  ai_summary: string | null      // migration 018
   created_at: string
   updated_at: string
 }
@@ -145,6 +149,8 @@ type PersonRow = {
   death_day: number | null      // migration 016
   birth_place: string | null    // migration 016
   death_place: string | null    // migration 016
+  email: string | null          // migration 017
+  phone: string | null          // migration 017
   first_mention: 'onboarding' | 'frise' | 'alinea' | 'manual' | 'dialogue'
   ai_summary: string | null
   alinea_count: number   // maintenu par trigger
@@ -291,16 +297,20 @@ export type Database = {
         Row: LifeEventRow
         Insert: {
           user_id: string
-          year: number
           title: string
           id?: string
+          year?: number | null
           status?: string
           is_pivot?: boolean
           emotional_intensity?: number
           event_month?: number | null
           event_day?: number | null
+          year_end?: number | null
+          event_month_end?: number | null
+          event_day_end?: number | null
           life_phase_id?: string | null
           documented?: boolean
+          ai_summary?: string | null
         }
         Update: Partial<Omit<LifeEventRow, 'id' | 'user_id' | 'created_at' | 'updated_at'>>
         Relationships: []
@@ -349,6 +359,8 @@ export type Database = {
           death_day?: number | null
           birth_place?: string | null
           death_place?: string | null
+          email?: string | null
+          phone?: string | null
           first_mention?: string
           ai_summary?: string | null
           alinea_count?: number

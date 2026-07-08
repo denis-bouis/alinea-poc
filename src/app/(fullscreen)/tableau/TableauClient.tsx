@@ -164,6 +164,7 @@ export default function TableauClient({
           onLastMessage={() => {}}
           onAlineaSaved={refresh}
           focus={focus}
+          onSetFocus={setFocus}
           onClearFocus={clearFocus}
         />
       </div>
@@ -189,6 +190,7 @@ export default function TableauClient({
               collapsedPhaseIds={effectiveCollapsedPhaseIds}
               onTogglePhase={togglePhaseCollapse}
               onEventClick={ev => openDetail({ type: 'life_event', id: ev.id, label: ev.title })}
+              onEventFocus={ev => setFocus({ type: 'life_event', id: ev.id, label: ev.title })}
               fullscreen={friseFullscreen}
             />
           ) : (
@@ -206,6 +208,7 @@ export default function TableauClient({
           visiblePersonIds={visiblePersonIds} visiblePlaceIds={visiblePlaceIds} visibleAlineaIds={alineaVisibleIds}
           fullscreenPanel={fullscreenPanel} onSetFullscreen={setFullscreenPanel}
           onOpen={openDetail}
+          onFocus={setFocus}
           onAddLink={() => setLinkEditorOpen(true)}
           onAddFamily={() => setFamilyEditorOpen(true)}
         />
@@ -286,7 +289,7 @@ export default function TableauClient({
           />
 
           {/* ≥1180px : 3 colonnes simultanées — <1180px : onglets */}
-          <div className="hidden min-[1180px]:grid flex-1 min-h-0" style={{ gridTemplateColumns: '380px 1fr 360px' }}>
+          <div className="hidden min-[1180px]:grid flex-1 min-h-0" style={{ gridTemplateColumns: '1fr 440px 360px' }}>
             {columns}
           </div>
 
@@ -301,6 +304,7 @@ export default function TableauClient({
                   onLastMessage={() => {}}
                   onAlineaSaved={refresh}
                   focus={focus}
+                  onSetFocus={setFocus}
                   onClearFocus={clearFocus}
                 />
               )}
@@ -310,6 +314,7 @@ export default function TableauClient({
                     phases={phases} themes={themes} events={visibleEvents} birthYear={birthYearOrDefault}
                     collapsedPhaseIds={effectiveCollapsedPhaseIds} onTogglePhase={togglePhaseCollapse}
                     onEventClick={ev => openDetail({ type: 'life_event', id: ev.id, label: ev.title })}
+                    onEventFocus={ev => setFocus({ type: 'life_event', id: ev.id, label: ev.title })}
                   />
                 ) : (
                   <div className="h-full flex items-center justify-center text-[13px] text-[#8C8278] italic p-6 text-center">
@@ -324,6 +329,7 @@ export default function TableauClient({
                   visiblePersonIds={visiblePersonIds} visiblePlaceIds={visiblePlaceIds} visibleAlineaIds={alineaVisibleIds}
                   fullscreenPanel={fullscreenPanel} onSetFullscreen={setFullscreenPanel}
                   onOpen={openDetail}
+                  onFocus={setFocus}
                   onAddLink={() => setLinkEditorOpen(true)}
                   onAddFamily={() => setFamilyEditorOpen(true)}
                 />
@@ -345,6 +351,7 @@ export default function TableauClient({
           relations={relations}
           themes={themes}
           phases={phases}
+          events={events}
           onClose={closeDetail}
           onNavigate={openDetail}
           onBack={detailStack.length > 1 ? backDetail : undefined}
@@ -355,7 +362,12 @@ export default function TableauClient({
       )}
 
       {linkEditorOpen && (
-        <LinkEditor people={people} onClose={() => setLinkEditorOpen(false)} onSaved={() => { setLinkEditorOpen(false); refresh() }} />
+        <LinkEditor
+          people={people}
+          personA={currentDetail?.type === 'person' ? people.find(p => p.id === currentDetail.id) : undefined}
+          onClose={() => setLinkEditorOpen(false)}
+          onSaved={() => { setLinkEditorOpen(false); refresh() }}
+        />
       )}
       {familyEditorOpen && (
         <FamilyUnitEditor people={people} onClose={() => setFamilyEditorOpen(false)} onSaved={() => { setFamilyEditorOpen(false); refresh() }} />

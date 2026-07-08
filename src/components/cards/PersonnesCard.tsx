@@ -18,20 +18,21 @@ type Props = {
   fullscreen:   boolean
   onToggleFullscreen: () => void
   onOpen:       (ref: EntityRef) => void
+  onFocus:      (ref: EntityRef) => void
   onAddLink:    () => void
   onAddFamily:  () => void
 }
 
 export default function PersonnesCard({
   people, relations, userName, visibleIds, collapsed, onToggleCollapse, fullscreen, onToggleFullscreen,
-  onOpen, onAddLink, onAddFamily,
+  onOpen, onFocus, onAddLink, onAddFamily,
 }: Props) {
   const [view, setView] = useState<'liste' | 'arbre'>('liste')
   const shown = visibleIds ? people.filter(p => visibleIds.has(p.id)) : people
 
   return (
     <CardShell
-      title="Personnes" count={people.length} collapsed={collapsed} onToggleCollapse={onToggleCollapse}
+      title="Personnes" count={shown.length} totalCount={people.length} collapsed={collapsed} onToggleCollapse={onToggleCollapse}
       fullscreen={fullscreen} onToggleFullscreen={onToggleFullscreen}
       headerExtra={
         <div className="flex items-center gap-0.5 bg-[#F2EDE5] rounded-md p-0.5 ml-1">
@@ -54,16 +55,26 @@ export default function PersonnesCard({
       ) : (
         <div className="flex flex-col">
           {shown.length === 0 ? (
-            <p className="text-[12px] text-[#8C8278] italic px-4 py-3">Aucune personne pour l&apos;instant.</p>
+            <p className="text-[12px] text-[#8C8278] italic px-4 py-3">
+              {people.length > 0 ? 'Aucune personne pour ce focus.' : 'Aucune personne pour l’instant.'}
+            </p>
           ) : shown.map(p => (
-            <button
-              key={p.id}
-              onClick={() => onOpen({ type: 'person', id: p.id, label: p.name })}
-              className="flex items-center justify-between gap-2 px-4 py-2 text-left hover:bg-[#FAF6F0] transition-colors border-b border-[#F2EDE5] last:border-0"
-            >
-              <span className="text-[13px] text-[#2C2825] truncate">{p.name}</span>
-              <span className="text-[11px] text-[#8C8278] flex-shrink-0">{p.relation}</span>
-            </button>
+            <div key={p.id} className="group flex items-center border-b border-[#F2EDE5] last:border-0">
+              <button
+                onClick={() => onOpen({ type: 'person', id: p.id, label: p.name })}
+                className="flex-1 min-w-0 flex items-center justify-between gap-2 px-4 py-2 text-left hover:bg-[#FAF6F0] transition-colors"
+              >
+                <span className="text-[13px] text-[#2C2825] truncate flex-1 min-w-0">{p.name}</span>
+                {p.relation && <span className="text-[11px] text-[#8C8278] flex-shrink-0 max-w-[40%] truncate">{p.relation}</span>}
+              </button>
+              <button
+                onClick={() => onFocus({ type: 'person', id: p.id, label: p.name })}
+                title="Mettre le focus ici"
+                className="flex-shrink-0 px-2 text-[#C4BDB6] hover:text-[#9B5E3A] opacity-0 group-hover:opacity-100 transition-opacity"
+              >
+                🎯
+              </button>
+            </div>
           ))}
         </div>
       )}

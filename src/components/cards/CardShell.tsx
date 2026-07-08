@@ -3,6 +3,7 @@
 type Props = {
   title:       string
   count:       number
+  totalCount?: number   // si différent de `count` (filtre focus/thématique actif) — affiché en "X / Y"
   collapsed:   boolean
   onToggleCollapse: () => void
   fullscreen:  boolean
@@ -11,7 +12,7 @@ type Props = {
   children:    React.ReactNode
 }
 
-export default function CardShell({ title, count, collapsed, onToggleCollapse, fullscreen, onToggleFullscreen, headerExtra, children }: Props) {
+export default function CardShell({ title, count, totalCount, collapsed, onToggleCollapse, fullscreen, onToggleFullscreen, headerExtra, children }: Props) {
   return (
     <div className={[
       'flex flex-col bg-white rounded-2xl border border-[#E8E2D9] overflow-hidden',
@@ -22,7 +23,9 @@ export default function CardShell({ title, count, collapsed, onToggleCollapse, f
           {collapsed ? '▸' : '▾'}
         </button>
         <span className="text-[11px] font-medium tracking-[0.1em] uppercase text-[#2C2825]">{title}</span>
-        <span className="text-[11px] text-[#8C8278]">· {count}</span>
+        <span className="text-[11px] text-[#8C8278]">
+          · {count}{totalCount !== undefined && totalCount !== count ? ` / ${totalCount}` : ''}
+        </span>
         {headerExtra}
         <button onClick={onToggleFullscreen} className="ml-auto text-[#8C8278] hover:text-[#2C2825] text-[13px]" title={fullscreen ? 'Réduire' : 'Plein écran'}>
           ⛶

@@ -2,12 +2,21 @@ import Anthropic from '@anthropic-ai/sdk'
 import { NextRequest } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import {
-  AGENT_TOOLS, READ_TOOL_NAMES, IMMEDIATE_WRITE_TOOL_NAMES,
-  executeReadTool, executeFlagAmbiguous, labelForWrite, iconForWrite,
-  type PendingWrite,
+  AGENT_TOOLS, READ_TOOL_NAMES, IMMEDIATE_WRITE_TOOL_NAMES, UI_SIGNAL_TOOL_NAMES, CONFIRM_WRITES_TOOL_NAME,
+  executeReadTool, executeFlagAmbiguous, labelForWrite, iconForWrite, applyWrite, sortPendingWrites,
+  type PendingWrite, type PendingWriteResult,
 } from '@/lib/agent/tools'
 
 const client = new Anthropic()
+
+// Sans repère explicite, le modèle raisonne par défaut à partir de sa date
+// d'entraînement — insuffisant ici où l'utilisateur peut évoquer des dates
+// proches ou futures par rapport à "aujourd'hui" (ex. 2025/2026 ne sont pas
+// dans le futur). Calculé à chaque requête pour rester exact au fil du temps.
+function dateContext(): string {
+  const today = new Date().toLocaleDateString('fr-FR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
+  return `## Repère temporel\n\nNous sommes le ${today}. Base-toi sur cette date réelle pour situer les événements dans le temps (passé/présent/futur) — pas sur ta date d'entraînement, qui n'a aucun rapport avec la date actuelle.\n\n`
+}
 
 const PERSONALITY = `Tu es Alinéa, compagnon de mémoire — à la fois confident bienveillant, biographe et guide introspectif.
 
@@ -58,10 +67,18 @@ Tu disposes d'outils pour consulter et faire évoluer la mémoire de vie (person
 
 1. **Cherche avant d'écrire.** Dès qu'une entité (personne, lieu, thématique, phase, événement) est mentionnée, utilise l'outil de recherche correspondant (search_people, search_themes, search_places, search_life_phases, search_life_events) avant toute proposition d'écriture — pour savoir si elle existe déjà.
 2. **Lis avant de décider.** Si un candidat plausible ressort de la recherche, utilise l'outil get_* correspondant pour lire la fiche complète avant de choisir entre mise à jour et création.
-3. **Jamais de mémorisation silencieuse.** Les outils d'écriture (upsert_person, upsert_place, upsert_life_phase, upsert_life_event, propose_theme, update_theme, link_people_relation, declare_family_unit, seed_alinea, update_profile) n'enregistrent qu'une PROPOSITION — ils ne s'exécutent jamais tout de suite. Avant de les appeler, ou juste après, EXPLICITE dans ta réponse ce que tu proposes de retenir, en langage naturel, sans jargon technique (ex. "je note ceci comme...") — jamais une affirmation déguisée en fait acquis. Termine ton message normalement ; l'utilisateur confirmera ou ajustera au tour suivant.
+3. **Jamais de mémorisation silencieuse — et jamais de proposition sans l'outil.** Les outils d'écriture (upsert_person, upsert_place, upsert_life_phase, upsert_life_event, propose_theme, update_theme, link_people_relation, declare_family_unit, seed_alinea, update_profile) n'enregistrent qu'une PROPOSITION — ils ne s'exécutent jamais tout de suite. Décrire une proposition en texte SANS appeler l'outil correspondant ne sert à rien : rien n'est enregistré, même temporairement, et la confirmation de l'utilisateur au tour suivant n'aura aucun effet. **Chaque entité que tu annonces "noter" ou "retenir" DOIT être accompagnée d'un appel réel à l'outil correspondant dans le même tour** — jamais une simple description en langage naturel qui n'appellerait aucun outil. En complément de cet appel, EXPLICITE dans ta réponse ce que tu proposes de retenir, sans jargon technique (ex. "je note ceci comme...") — jamais une affirmation déguisée en fait acquis. Termine ton message normalement ; l'utilisateur confirmera ou ajustera au tour suivant.
 4. **Ambiguïté → flag_ambiguous.** Si deux fiches proches ou une information incertaine te empêchent de trancher, n'invente pas — dépose l'ambiguïté avec flag_ambiguous (celui-ci s'exécute immédiatement, ce n'est pas une proposition) et continue le dialogue normalement.
 5. **Rien à retenir → rien à faire.** N'appelle aucun outil d'écriture si l'échange n'apporte rien de nouveau.
-6. Ne mentionne jamais d'outil, de base de données ou de mécanisme technique à l'utilisateur — parle naturellement.`
+6. Ne mentionne jamais d'outil, de base de données ou de mécanisme technique à l'utilisateur — parle naturellement.
+7. **Confirmation orale du lot proposé.** Si l'utilisateur confirme en langage naturel ("oui", "c'est parfait", "vas-y", "top"...) le lot de propositions faites au tour précédent, appelle confirm_pending_writes — n'appelle pas à nouveau les upsert_* un par un. S'il corrige ou retire un élément avant de valider globalement, ne confirme pas encore : prends en compte l'ajustement et attends une confirmation explicite au tour suivant.
+8. **Focus oral.** Si l'utilisateur exprime vouloir se concentrer sur une personne, un lieu, un événement ou un alinéa déjà connu (ex. "recentre-toi sur Laurence", "revenons à mon voyage en Espagne"), cherche l'entité correspondante puis appelle set_focus. Si l'utilisateur exprime vouloir sortir du focus ("laisse tomber", "reviens à la vue générale"), appelle clear_focus.
+9. **Correction d'une entité tout juste proposée.** Si l'utilisateur corrige une information que tu viens de proposer ou mémoriser (nom, date, orthographe...), réutilise l'identifiant déjà connu de cette entité (person_id, life_event_id, place_id...) pour la mettre à jour. Ne relance jamais une recherche par le nouveau nom : elle ne trouvera pas l'entité sous son ancien nom et créera un doublon au lieu d'une correction.
+10. **Jamais de thématique ou de phase de vie flottante.** N'appelle propose_theme, update_theme ou upsert_life_phase que si un événement concret (upsert_life_event, existant ou proposé dans le même tour) s'y rattache déjà ou va s'y rattacher. Une thématique ou une phase ne doit jamais exister sans événement qui la justifie.
+11. **Mémorisation d'un alinéa strictement encadrée.** N'appelle seed_alinea QUE si les deux conditions sont réunies : (a) le focus de la conversation porte sur un événement précis (contexte fourni, ou posé via set_focus/upsert_life_event dans l'échange), ET (b) l'utilisateur a explicitement formulé lui-même le contenu à retenir. Ne mémorise jamais un alinéa sur simple émergence d'une trame narrative — la rédaction d'un alinéa est toujours une action volontaire de l'utilisateur, jamais une initiative silencieuse de ta part.
+12. **Toujours chercher un rattachement thématique.** Symétrique de la règle 10 : dès qu'un événement évoque clairement un sujet récurrent (ex. randonnée, voyage, un métier...), cherche une thématique existante (search_themes) et propose de l'y rattacher ; si aucune ne correspond, propose_theme puis rattache. Ne laisse jamais un événement thématiquement évident sans thématique proposée.
+13. **Synthèse d'un événement.** life_event dispose d'un ai_summary, distinct du contenu de chaque alinéa qui s'y rattache. Quand un seed_alinea confirmé enrichit la vision d'ensemble de son événement, mets à jour cette synthèse via upsert_life_event (life_event_id + ai_summary fusionné avec l'existant, jamais juxtaposé) — indépendamment du nombre d'alinéas déjà rattachés à cet événement.
+14. **Date d'un événement.** Si elle n'est pas mentionnée, demande-la avant de créer l'événement (upsert_life_event) ; si l'utilisateur ne la connaît pas ou ne veut pas la préciser, crée-le sans année plutôt que de deviner l'année en cours. Si l'événement couvre une période plutôt qu'un jour précis, précise aussi year_end (et month_end/day_end si pertinent).`
 
 type AiProfile = {
   display_name: string | null
@@ -72,7 +89,7 @@ type AiProfile = {
   people_summary: Array<{ name: string; relation: string | null; relation_type: string | null }> | null
 }
 
-type CompactLifeEvent = { id: string; year: number; title: string; is_pivot: boolean }
+type CompactLifeEvent = { id: string; year: number | null; title: string; is_pivot: boolean }
 type CompactAlinea = { id: string; title: string | null; approximate_date: string | null }
 
 function buildMemoryBlock(
@@ -96,7 +113,7 @@ function buildMemoryBlock(
   if (events.length > 0) {
     lines.push('\nFrise de vie :')
     for (const e of events) {
-      lines.push(`- [${e.id}] ${e.year} — ${e.title}${e.is_pivot ? ' [tournant]' : ''}`)
+      lines.push(`- [${e.id}] ${e.year ?? 'à dater'} — ${e.title}${e.is_pivot ? ' [tournant]' : ''}`)
     }
   } else {
     lines.push('\nFrise de vie : vide')
@@ -129,7 +146,7 @@ function buildNewSystemPrompt(memoryBlock: string): string {
 
 1. Commence par une question d'amorce sur le souvenir que l'utilisateur veut partager.
 2. Creuse avec 1 à 2 questions de suivi pour obtenir des détails sensoriels, émotionnels, des personnes impliquées.
-3. Quand une trame narrative émerge, amorce un alinéa (seed_alinea) — cf. règles mémoire ci-dessous.
+3. Quand une trame narrative émerge, capture les événements concrets qu'elle contient (upsert_life_event) et les thématiques qui en découlent (propose_theme) — mais n'amorce un alinéa (seed_alinea) que dans les conditions strictes de la règle 11 ci-dessous.
 4. Si l'utilisateur demande explicitement une rédaction complète, rédige un alinéa et annonce-le avant.
 
 ${DRAFT_SIGNAL}
@@ -186,10 +203,11 @@ ${AGENT_LOOP_RULES}`
 }
 
 export async function POST(request: NextRequest) {
-  const { messages: incomingMessages, existingContent, aiMemory } = await request.json() as {
+  const { messages: incomingMessages, existingContent, aiMemory, pendingWrites: clientPendingWrites } = await request.json() as {
     messages: Anthropic.MessageParam[]
     existingContent?: string
     aiMemory?: string
+    pendingWrites?: PendingWrite[]
   }
 
   let memoryBlock = ''
@@ -234,11 +252,11 @@ export async function POST(request: NextRequest) {
     && (incomingMessages[0] as Anthropic.MessageParam).role === 'user'
     && (incomingMessages[0] as Anthropic.MessageParam).content === '__onboarding_mode1__'
 
-  const systemPrompt = existingContent
+  const systemPrompt = dateContext() + (existingContent
     ? buildEditSystemPrompt(existingContent, memoryBlock, aiMemory)
     : isOnboardingMode1
     ? buildOnboardingMode1Prompt(memoryBlock)
-    : buildNewSystemPrompt(memoryBlock)
+    : buildNewSystemPrompt(memoryBlock))
 
   const effectiveMessages = isOnboardingMode1
     ? [{ role: 'user' as const, content: 'Bonjour' }]
@@ -250,6 +268,8 @@ export async function POST(request: NextRequest) {
     async start(controller) {
       let loopCount = 0
       const pendingWrites: PendingWrite[] = []
+      let confirmedResults: PendingWriteResult[] | null = null
+      let focusSignal: { action: 'set'; type: string; id: string; label: string } | { action: 'clear' } | null = null
 
       try {
         let messages: Anthropic.MessageParam[] = effectiveMessages
@@ -282,6 +302,27 @@ export async function POST(request: NextRequest) {
                   content = await executeReadTool(block.name, block.input as Record<string, unknown>, supabase, userId)
                 } else if (IMMEDIATE_WRITE_TOOL_NAMES.has(block.name)) {
                   content = await executeFlagAmbiguous(block.input as Record<string, unknown>, supabase, userId)
+                } else if (block.name === CONFIRM_WRITES_TOOL_NAME) {
+                  const writes = sortPendingWrites(clientPendingWrites ?? [])
+                  if (writes.length === 0) {
+                    // Rien à exécuter : ne pas signaler de confirmation au client (un
+                    // tableau vide serait vrai en JS et afficherait "Noté ✓" à tort).
+                    content = "Aucune proposition en attente à confirmer côté serveur — dis à l'utilisateur qu'il n'y a rien à mémoriser pour l'instant."
+                  } else {
+                    const results = await Promise.all(writes.map(w => applyWrite(w, supabase!, userId!)))
+                    confirmedResults = results
+                    const failed = results.filter(r => !r.saved)
+                    content = failed.length > 0
+                      ? `Confirmé avec ${failed.length} échec(s) : ${failed.map(f => f.label).join(', ')}`
+                      : 'Confirmé et enregistré.'
+                  }
+                } else if (block.name === 'set_focus') {
+                  const d = block.input as { type: string; id: string; label: string }
+                  focusSignal = { action: 'set', ...d }
+                  content = 'Focus appliqué.'
+                } else if (block.name === 'clear_focus') {
+                  focusSignal = { action: 'clear' }
+                  content = 'Focus effacé.'
                 } else {
                   // Écriture différée : on enregistre la proposition, on ne l'exécute pas.
                   pendingWrites.push({ tool: block.name, input: block.input as Record<string, unknown> })
@@ -309,6 +350,14 @@ export async function POST(request: NextRequest) {
           }))
           controller.enqueue(encoder.encode(`\n\n\`\`\`memory-pending\n${JSON.stringify(payload)}\n\`\`\``))
         }
+        if (confirmedResults) {
+          controller.enqueue(encoder.encode(`\n\n\`\`\`memory-confirmed\n${JSON.stringify(confirmedResults)}\n\`\`\``))
+        }
+        if (focusSignal) {
+          controller.enqueue(encoder.encode(`\n\n\`\`\`focus-signal\n${JSON.stringify(focusSignal)}\n\`\`\``))
+        }
+      } catch {
+        controller.enqueue(encoder.encode('\n\n⚠️ Une erreur est survenue de mon côté — réessaie dans un instant.'))
       } finally {
         controller.close()
       }

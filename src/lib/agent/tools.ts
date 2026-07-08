@@ -163,6 +163,8 @@ export const AGENT_TOOLS: Anthropic.Tool[] = [
         death_month: { type: 'number' },
         death_day: { type: 'number' },
         death_place: { type: 'string' },
+        email: { type: 'string', description: "uniquement si l'utilisateur la communique explicitement — jamais déduite ou inventée" },
+        phone: { type: 'string', description: "uniquement si l'utilisateur le communique explicitement — jamais déduit ou inventé" },
         ai_summary: { type: 'string', description: 'synthèse narrative complète et à jour (intègre l\'existant, ne le juxtapose pas)' },
       },
       required: ['name'],
@@ -287,18 +289,26 @@ export const AGENT_TOOLS: Anthropic.Tool[] = [
   },
   {
     name: 'upsert_life_event',
-    description: "Crée ou met à jour un événement de la frise (fusion si déjà connu par son titre, sinon création).",
+    description:
+      "Crée ou met à jour un événement de la frise (fusion si déjà connu par son titre, sinon création). " +
+      "Si la date n'est pas mentionnée par l'utilisateur, demande-la avant de créer l'événement ; s'il ne la connaît pas ou ne veut pas la préciser, crée l'événement sans année (omets year) plutôt que de deviner l'année en cours. " +
+      "Si l'événement s'étend sur une période (ex. un voyage de plusieurs semaines) plutôt qu'un jour ponctuel, précise en plus year_end (et éventuellement month_end/day_end). " +
+      "ai_summary est une synthèse de l'événement dans son ensemble, distincte du contenu de chaque alinéa qui s'y rattache — à fusionner avec l'existant (intègre les nouveaux apports, ne les juxtapose pas), notamment après un seed_alinea qui enrichit la vision d'ensemble de cet événement.",
     input_schema: {
       type: 'object' as const,
       properties: {
         life_event_id: { type: 'string' },
         title: { type: 'string' },
-        year: { type: 'number' },
+        year: { type: 'number', description: 'année de début — omettre si inconnue/non précisée par l\'utilisateur' },
         month: { type: 'number' },
         day: { type: 'number' },
+        year_end: { type: 'number', description: 'année de fin — uniquement si l\'événement couvre une période, pas un jour ponctuel' },
+        month_end: { type: 'number' },
+        day_end: { type: 'number' },
         life_phase_name: { type: 'string', description: 'nom d\'une phase déjà connue à rattacher' },
         is_pivot: { type: 'boolean' },
         emotional_intensity: { type: 'number', description: '0 à 3' },
+        ai_summary: { type: 'string', description: "synthèse narrative de l'événement, complète et à jour" },
       },
       required: ['title'],
     },
@@ -306,7 +316,8 @@ export const AGENT_TOOLS: Anthropic.Tool[] = [
   {
     name: 'seed_alinea',
     description:
-      "Amorce un futur alinéa à partir d'une trame narrative qui vient d'émerger dans le dialogue (pas encore rédigée). " +
+      "Amorce un alinéa à partir d'un contenu que l'utilisateur vient d'explicité lui-même. " +
+      "N'appelle cet outil QUE si le focus de la conversation porte sur un événement précis ET que l'utilisateur a explicitement formulé le contenu à retenir — jamais sur simple émergence d'une trame narrative. " +
       "Crée un alinéa à l'état 'seed' — la trame brute, telle que dite par l'utilisateur, préservée pour rédaction ultérieure sur demande.",
     input_schema: {
       type: 'object' as const,
@@ -316,6 +327,7 @@ export const AGENT_TOOLS: Anthropic.Tool[] = [
         life_event_title: { type: 'string', description: "titre d'un événement de frise déjà connu à rattacher" },
         theme_names: { type: 'array', items: { type: 'string' }, description: 'thématiques déjà connues concernées' },
         person_names: { type: 'array', items: { type: 'string' }, description: 'personnes déjà connues concernées' },
+        place_names: { type: 'array', items: { type: 'string' }, description: 'lieux déjà connus concernés' },
         approximate_date: { type: 'string', description: 'date approximative en texte libre si mentionnée' },
       },
       required: ['title', 'raw_content'],
@@ -348,6 +360,35 @@ export const AGENT_TOOLS: Anthropic.Tool[] = [
       required: [],
     },
   },
+  {
+    name: 'confirm_pending_writes',
+    description:
+      "Confirme et déclenche l'exécution réelle du lot de propositions faites au tour précédent (upsert_*, propose_theme, etc. encore en attente) — équivalent oral du clic sur le bouton \"Mémoriser\". " +
+      "N'appelle cet outil QUE si l'utilisateur vient d'exprimer une confirmation globale et sans ambiguïté (\"oui\", \"c'est parfait\", \"vas-y\", \"top\"...) du lot déjà proposé — jamais pour de nouvelles propositions. " +
+      "S'il corrige ou retire un élément avant de valider, ne l'appelle pas encore : prends en compte l'ajustement et attends une confirmation explicite.",
+    input_schema: { type: 'object' as const, properties: {}, required: [] },
+  },
+  {
+    name: 'set_focus',
+    description:
+      "Définit le focus de la conversation sur une entité précise déjà connue (personne, lieu, événement, alinéa) — équivalent oral du clic 🎯 sur l'entité dans l'interface. " +
+      "Cherche d'abord l'entité (search_people/search_places/search_life_events, ou l'index déjà fourni en contexte pour les alinéas et événements) ; si plusieurs candidats sont plausibles, ne choisis pas seul — demande de préciser. " +
+      "S'exécute immédiatement : ce n'est pas une écriture en base, juste un état d'affichage, réversible via clear_focus.",
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        type:  { type: 'string', enum: ['person', 'place', 'life_event', 'alinea'] },
+        id:    { type: 'string' },
+        label: { type: 'string' },
+      },
+      required: ['type', 'id', 'label'],
+    },
+  },
+  {
+    name: 'clear_focus',
+    description: "Efface le focus courant — équivalent oral du bouton \"Effacer\" du bandeau de focus.",
+    input_schema: { type: 'object' as const, properties: {}, required: [] },
+  },
 ]
 
 export const READ_TOOL_NAMES = new Set([
@@ -361,8 +402,19 @@ export const READ_TOOL_NAMES = new Set([
 // declare_family_unit, seed_alinea, update_profile) est une proposition différée.
 export const IMMEDIATE_WRITE_TOOL_NAMES = new Set(['flag_ambiguous'])
 
+// set_focus/clear_focus ne touchent pas la base — un simple signal d'état
+// d'affichage renvoyé au client (route /api/chat), pas une écriture.
+export const UI_SIGNAL_TOOL_NAMES = new Set(['set_focus', 'clear_focus'])
+
+// confirm_pending_writes déclenche l'exécution réelle du lot déjà proposé
+// (via applyWrite) — géré à part dans la route, ni lecture ni écriture différée.
+export const CONFIRM_WRITES_TOOL_NAME = 'confirm_pending_writes'
+
 export function isDeferredWriteTool(name: string): boolean {
-  return !READ_TOOL_NAMES.has(name) && !IMMEDIATE_WRITE_TOOL_NAMES.has(name)
+  return !READ_TOOL_NAMES.has(name)
+    && !IMMEDIATE_WRITE_TOOL_NAMES.has(name)
+    && !UI_SIGNAL_TOOL_NAMES.has(name)
+    && name !== CONFIRM_WRITES_TOOL_NAME
 }
 
 // ============================================================
@@ -391,7 +443,7 @@ export async function executeReadTool(
           .select('year, title, is_pivot, emotional_intensity')
           .eq('id', id).eq('user_id', userId).single()
         if (!data) return 'Événement introuvable.'
-        return `**${data.year} — ${data.title}**${data.is_pivot ? ' [moment tournant]' : ''}\nIntensité émotionnelle : ${data.emotional_intensity}/3`
+        return `**${data.year ?? 'à dater'} — ${data.title}**${data.is_pivot ? ' [moment tournant]' : ''}\nIntensité émotionnelle : ${data.emotional_intensity}/3`
       }
       return 'Type inconnu.'
     }
@@ -462,7 +514,7 @@ export async function executeReadTool(
       const { query } = input as { query: string }
       const { data } = await supabase.from('life_events').select('id, year, title, status').eq('user_id', userId).ilike('title', `%${query}%`).limit(10)
       if (!data || data.length === 0) return 'Aucun événement trouvé.'
-      return data.map(e => `[${e.id}] ${e.year} — ${e.title} [${e.status}]`).join('\n')
+      return data.map(e => `[${e.id}] ${e.year ?? 'à dater'} — ${e.title} [${e.status}]`).join('\n')
     }
 
     case 'get_life_event': {
@@ -587,13 +639,14 @@ export async function applyWrite(write: PendingWrite, supabase: Supa, userId: st
           person_id?: string; name: string; relation?: string; relation_type?: string
           birth_year?: number; birth_month?: number; birth_day?: number; birth_place?: string
           is_deceased?: boolean; death_year?: number; death_month?: number; death_day?: number; death_place?: string
+          email?: string; phone?: string
           ai_summary?: string
         }
         const existingId = d.person_id ?? await findPersonIdByName(supabase, userId, d.name)
 
         const facts = pickDefined<Database['public']['Tables']['people']['Update']>(d, [
           'relation', 'relation_type', 'birth_year', 'birth_month', 'birth_day', 'birth_place',
-          'is_deceased', 'death_year', 'death_month', 'death_day', 'death_place', 'ai_summary',
+          'is_deceased', 'death_year', 'death_month', 'death_day', 'death_place', 'email', 'phone', 'ai_summary',
         ])
 
         if (existingId) {
@@ -714,7 +767,8 @@ export async function applyWrite(write: PendingWrite, supabase: Supa, userId: st
       case 'upsert_life_event': {
         const d = write.input as {
           life_event_id?: string; title: string; year?: number; month?: number; day?: number
-          life_phase_name?: string; is_pivot?: boolean; emotional_intensity?: number
+          year_end?: number; month_end?: number; day_end?: number
+          life_phase_name?: string; is_pivot?: boolean; emotional_intensity?: number; ai_summary?: string
         }
         let eventId = d.life_event_id
         if (!eventId) {
@@ -730,24 +784,34 @@ export async function applyWrite(write: PendingWrite, supabase: Supa, userId: st
         if (d.year !== undefined) facts.year = d.year
         if (d.month !== undefined) facts.event_month = d.month
         if (d.day !== undefined) facts.event_day = d.day
+        if (d.year_end !== undefined) facts.year_end = d.year_end
+        if (d.month_end !== undefined) facts.event_month_end = d.month_end
+        if (d.day_end !== undefined) facts.event_day_end = d.day_end
         if (d.is_pivot !== undefined) facts.is_pivot = d.is_pivot
         if (d.emotional_intensity !== undefined) facts.emotional_intensity = d.emotional_intensity
+        if (d.ai_summary !== undefined) facts.ai_summary = d.ai_summary
         if (lifePhaseId !== undefined) facts.life_phase_id = lifePhaseId
 
         if (eventId) {
           const { error } = await supabase.from('life_events').update(facts).eq('id', eventId).eq('user_id', userId)
           return { tool: write.tool, label, saved: !error, error: error?.message }
         }
+        // Sans date connue, on n'invente jamais l'année en cours — l'événement
+        // reste "à dater" (year null) plutôt que d'afficher une fausse certitude.
         const { error } = await supabase.from('life_events').insert({
           user_id: userId,
           title: d.title,
-          year: d.year ?? new Date().getFullYear(),
+          year: d.year ?? null,
           status: 'undocumented',
           is_pivot: d.is_pivot ?? false,
           emotional_intensity: d.emotional_intensity ?? 1,
           event_month: d.month ?? null,
           event_day: d.day ?? null,
+          year_end: d.year_end ?? null,
+          event_month_end: d.month_end ?? null,
+          event_day_end: d.day_end ?? null,
           life_phase_id: lifePhaseId ?? null,
+          ai_summary: d.ai_summary ?? null,
         })
         return { tool: write.tool, label, saved: !error, error: error?.message }
       }
@@ -755,7 +819,7 @@ export async function applyWrite(write: PendingWrite, supabase: Supa, userId: st
       case 'seed_alinea': {
         const d = write.input as {
           title: string; raw_content: string; life_event_title?: string
-          theme_names?: string[]; person_names?: string[]; approximate_date?: string
+          theme_names?: string[]; person_names?: string[]; place_names?: string[]; approximate_date?: string
         }
         let lifeEventId: string | null = null
         if (d.life_event_title) {
@@ -789,6 +853,12 @@ export async function applyWrite(write: PendingWrite, supabase: Supa, userId: st
           const personIds = (await Promise.all(d.person_names.map(n => findPersonIdByName(supabase, userId, n)))).filter((x): x is string => !!x)
           if (personIds.length) {
             await supabase.from('alinea_people').insert(personIds.map(person_id => ({ alinea_id: alinea.id, person_id, role: 'mentioned' as const })))
+          }
+        }
+        if (d.place_names?.length) {
+          const { data: places } = await supabase.from('places').select('id, name').eq('user_id', userId).in('name', d.place_names)
+          if (places?.length) {
+            await supabase.from('alinea_places').insert(places.map(p => ({ alinea_id: alinea.id, place_id: p.id })))
           }
         }
         return { tool: write.tool, label, saved: true }

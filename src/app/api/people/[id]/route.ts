@@ -20,21 +20,33 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   return NextResponse.json(data)
 }
 
-// PATCH — modifier le nom / la relation
+// PATCH — modifier les faits d'une personne (nom, relation, naissance, coordonnées)
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { id } = await params
-  const body = await req.json() as { name?: string; relation?: string; relationType?: string }
+  const body = await req.json() as {
+    name?: string; relation?: string; relationType?: string
+    birthYear?: number | null; birthMonth?: number | null; birthDay?: number | null
+    email?: string | null; phone?: string | null; aiSummary?: string | null
+  }
 
+  // Champs texte non vides = renseignés ; champs optionnels (birth*/email/phone/aiSummary)
+  // acceptent explicitement null pour effacer une valeur déjà saisie.
   const { error } = await supabase
     .from('people')
     .update({
       ...(body.name         ? { name:          body.name.trim()              } : {}),
       ...(body.relation     ? { relation:      body.relation.trim()          } : {}),
       ...(body.relationType ? { relation_type: body.relationType as RelationType } : {}),
+      ...(body.birthYear  !== undefined ? { birth_year:  body.birthYear  } : {}),
+      ...(body.birthMonth !== undefined ? { birth_month: body.birthMonth } : {}),
+      ...(body.birthDay   !== undefined ? { birth_day:   body.birthDay   } : {}),
+      ...(body.email !== undefined ? { email: body.email?.trim() || null } : {}),
+      ...(body.phone !== undefined ? { phone: body.phone?.trim() || null } : {}),
+      ...(body.aiSummary !== undefined ? { ai_summary: body.aiSummary?.trim() || null } : {}),
     })
     .eq('id', id)
     .eq('user_id', user.id)

@@ -23,6 +23,7 @@ type Props = {
   fullscreenPanel: FullscreenPanel
   onSetFullscreen: (panel: FullscreenPanel) => void
   onOpen:       (ref: EntityRef) => void
+  onFocus:      (ref: EntityRef) => void
   onAddLink:    () => void
   onAddFamily:  () => void
 }
@@ -30,7 +31,7 @@ type Props = {
 export default function FichesColumn({
   people, relations, places, alineas, themes, userName,
   visiblePersonIds, visiblePlaceIds, visibleAlineaIds, highlightAlineaId,
-  fullscreenPanel, onSetFullscreen, onOpen, onAddLink, onAddFamily,
+  fullscreenPanel, onSetFullscreen, onOpen, onFocus, onAddLink, onAddFamily,
 }: Props) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
 
@@ -51,19 +52,19 @@ export default function FichesColumn({
         people={people} relations={relations} userName={userName} visibleIds={visiblePersonIds}
         collapsed={collapsed.has('personnes')} onToggleCollapse={() => toggleCollapse('personnes')}
         fullscreen={fullscreenPanel === 'personnes'} onToggleFullscreen={() => toggleFullscreen('personnes')}
-        onOpen={onOpen} onAddLink={onAddLink} onAddFamily={onAddFamily}
+        onOpen={onOpen} onFocus={onFocus} onAddLink={onAddLink} onAddFamily={onAddFamily}
       />
       <LieuxCard
         places={places} visibleIds={visiblePlaceIds}
         collapsed={collapsed.has('lieux')} onToggleCollapse={() => toggleCollapse('lieux')}
         fullscreen={fullscreenPanel === 'lieux'} onToggleFullscreen={() => toggleFullscreen('lieux')}
-        onOpen={onOpen}
+        onOpen={onOpen} onFocus={onFocus}
       />
       <AlineasCard
         alineas={alineas} themes={themes} visibleIds={visibleAlineaIds} highlightId={highlightAlineaId}
         collapsed={collapsed.has('alineas')} onToggleCollapse={() => toggleCollapse('alineas')}
         fullscreen={fullscreenPanel === 'alineas'} onToggleFullscreen={() => toggleFullscreen('alineas')}
-        onOpen={onOpen}
+        onOpen={onOpen} onFocus={onFocus}
       />
     </div>
   )

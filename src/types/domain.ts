@@ -36,9 +36,12 @@ export type Theme = {
 export type LifeEvent = {
   id: string
   user_id: string
-  year: number
+  year: number | null           // migration 019 — nullable, "à dater"
   event_month: number | null   // migration 013
   event_day: number | null     // migration 013
+  year_end: number | null        // migration 019 — événement sur une période
+  event_month_end: number | null // migration 019
+  event_day_end: number | null   // migration 019
   life_phase_id: string | null // migration 013 — rattachement à une phase de vie
   title: string
   status: EventStatus
@@ -46,6 +49,7 @@ export type LifeEvent = {
   theme_ids: string[]          // peuplé depuis life_event_themes (join côté serveur)
   is_pivot: boolean
   emotional_intensity: number  // 0–3
+  ai_summary: string | null    // migration 018 — synthèse fusionnée, indépendante du détail de chaque alinéa
   created_at: string
   updated_at: string
 }
@@ -92,6 +96,8 @@ export type Person = {
   death_day: number | null      // migration 016
   birth_place: string | null    // migration 016
   death_place: string | null    // migration 016
+  email: string | null          // migration 017
+  phone: string | null          // migration 017
   first_mention: FirstMention
   ai_summary: string | null
   alinea_count: number

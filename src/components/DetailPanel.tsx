@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import type { Person, PersonRelation, Theme, LifePhase, LifeEvent } from '@/types/domain'
 import { RELATION_TYPE_LABEL } from '@/types/domain'
@@ -22,6 +22,7 @@ type Props = {
   relations:   PersonRelation[]
   themes:      Theme[]
   phases:      LifePhase[]
+  events:      LifeEvent[]
   onClose:     () => void
   onNavigate:  (ref: EntityRef) => void
   onBack?:     () => void
@@ -31,7 +32,7 @@ type Props = {
 }
 
 export default function DetailPanel({
-  entity, people, relations, themes, phases, onClose, onNavigate, onBack, onFocus, onSaved, onAddLink,
+  entity, people, relations, themes, phases, events, onClose, onNavigate, onBack, onFocus, onSaved, onAddLink,
 }: Props) {
   const [loading, setLoading]   = useState(true)
   const [place,   setPlace]     = useState<PlaceData | null>(null)
@@ -41,6 +42,28 @@ export default function DetailPanel({
   const [mode,    setMode]      = useState<'view' | 'edit' | 'merge' | 'delete'>('view')
   const [editName, setEditName] = useState('')
   const [editRelation, setEditRelation] = useState('')
+  const [editBirthYear, setEditBirthYear]   = useState('')
+  const [editBirthMonth, setEditBirthMonth] = useState('')
+  const [editBirthDay, setEditBirthDay]     = useState('')
+  const [editEmail, setEditEmail]           = useState('')
+  const [editPhone, setEditPhone]           = useState('')
+  const [editPlaceName, setEditPlaceName]       = useState('')
+  const [editPlaceRegion, setEditPlaceRegion]   = useState('')
+  const [editPlaceCountry, setEditPlaceCountry] = useState('')
+  const [editEventTitle, setEditEventTitle] = useState('')
+  const [editEventYear, setEditEventYear]   = useState('')
+  const [editEventMonth, setEditEventMonth] = useState('')
+  const [editEventDay, setEditEventDay]     = useState('')
+  const [editEventIsRange, setEditEventIsRange] = useState(false)
+  const [editEventYearEnd, setEditEventYearEnd]   = useState('')
+  const [editEventMonthEnd, setEditEventMonthEnd] = useState('')
+  const [editEventDayEnd, setEditEventDayEnd]     = useState('')
+  const [editPersonAiSummary, setEditPersonAiSummary] = useState('')
+  const [editPlaceAiSummary,  setEditPlaceAiSummary]  = useState('')
+  const [editEventAiSummary,  setEditEventAiSummary]  = useState('')
+  // Modifier la mémoire IA est sensible : premier clic sur Sauvegarder affiche
+  // un avertissement, il faut confirmer une seconde fois pour appliquer.
+  const [pendingAiConfirm, setPendingAiConfirm] = useState(false)
   const [mergeTarget, setMergeTarget] = useState<Person | null>(null)
   const [keepId, setKeepId] = useState('')
   const [saving, setSaving] = useState(false)
@@ -49,9 +72,18 @@ export default function DetailPanel({
   const person = entity.type === 'person' ? people.find(p => p.id === entity.id) ?? null : null
 
   useEffect(() => {
-    setMode('view'); setError(null)
+    setMode('view'); setError(null); setPendingAiConfirm(false)
     if (entity.type === 'person') {
-      if (person) { setEditName(person.name); setEditRelation(person.relation ?? '') }
+      if (person) {
+        setEditName(person.name)
+        setEditRelation(person.relation ?? '')
+        setEditBirthYear(person.birth_year?.toString() ?? '')
+        setEditBirthMonth(person.birth_month?.toString() ?? '')
+        setEditBirthDay(person.birth_day?.toString() ?? '')
+        setEditEmail(person.email ?? '')
+        setEditPhone(person.phone ?? '')
+        setEditPersonAiSummary(person.ai_summary ?? '')
+      }
       setLoading(false)
       return
     }
@@ -64,7 +96,14 @@ export default function DetailPanel({
       if (entity.type === 'place') {
         const { data } = await supabase.from('places').select('*').eq('id', entity.id).single()
         if (cancelled) return
-        setPlace((data as PlaceData) ?? null)
+        const placeData = (data as PlaceData) ?? null
+        setPlace(placeData)
+        if (placeData) {
+          setEditPlaceName(placeData.name)
+          setEditPlaceRegion(placeData.region ?? '')
+          setEditPlaceCountry(placeData.country ?? '')
+          setEditPlaceAiSummary(placeData.ai_summary ?? '')
+        }
         const [{ data: al }, { data: ev }] = await Promise.all([
           supabase.from('alinea_places').select('alinea_id, alineas(id, title)').eq('place_id', entity.id),
           supabase.from('life_event_places').select('life_event_id, life_events(id, title)').eq('place_id', entity.id),
@@ -82,9 +121,22 @@ export default function DetailPanel({
       }
 
       if (entity.type === 'life_event') {
-        const { data } = await supabase.from('life_events').select('*').eq('id', entity.id).single()
-        if (cancelled) return
-        setEvent(data as LifeEvent | null)
+        // theme_ids est un champ dérivé (jointure life_event_themes, reconstruit
+        // en amont dans page.tsx) — absent d'un select('*') direct sur life_events.
+        // On le prend depuis la liste déjà enrichie plutôt que de le re-fetcher.
+        const eventData = events.find(e => e.id === entity.id) ?? null
+        setEvent(eventData)
+        if (eventData) {
+          setEditEventTitle(eventData.title)
+          setEditEventYear(eventData.year?.toString() ?? '')
+          setEditEventMonth(eventData.event_month?.toString() ?? '')
+          setEditEventDay(eventData.event_day?.toString() ?? '')
+          setEditEventIsRange(eventData.year_end != null)
+          setEditEventYearEnd(eventData.year_end?.toString() ?? '')
+          setEditEventMonthEnd(eventData.event_month_end?.toString() ?? '')
+          setEditEventDayEnd(eventData.event_day_end?.toString() ?? '')
+          setEditEventAiSummary(eventData.ai_summary ?? '')
+        }
         const { data: al } = await supabase
           .from('alineas').select('id, title, sort_order').eq('life_event_id', entity.id).order('sort_order')
         if (cancelled) return
@@ -118,16 +170,64 @@ export default function DetailPanel({
 
   async function handleSaveEdit() {
     if (!person || !editName.trim()) return
+    const aiChanged = editPersonAiSummary !== (person.ai_summary ?? '')
+    if (aiChanged && !pendingAiConfirm) { setPendingAiConfirm(true); return }
     setSaving(true); setError(null)
     const res = await fetch(`/api/people/${person.id}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: editName, relation: editRelation }),
+      body: JSON.stringify({
+        name: editName, relation: editRelation,
+        birthYear:  editBirthYear.trim()  ? Number(editBirthYear)  : null,
+        birthMonth: editBirthMonth.trim() ? Number(editBirthMonth) : null,
+        birthDay:   editBirthDay.trim()   ? Number(editBirthDay)   : null,
+        email: editEmail.trim() || null,
+        phone: editPhone.trim() || null,
+        aiSummary: editPersonAiSummary || null,
+      }),
     })
-    setSaving(false)
+    setSaving(false); setPendingAiConfirm(false)
     if (res.ok) {
-      fetch(`/api/people/${person.id}/refresh-summary`, { method: 'POST' }).catch(() => {})
+      if (!aiChanged) fetch(`/api/people/${person.id}/refresh-summary`, { method: 'POST' }).catch(() => {})
       onSaved(); onClose()
     } else setError('Erreur lors de la sauvegarde.')
+  }
+
+  async function handleSavePlaceEdit() {
+    if (!place || !editPlaceName.trim()) return
+    const aiChanged = editPlaceAiSummary !== (place.ai_summary ?? '')
+    if (aiChanged && !pendingAiConfirm) { setPendingAiConfirm(true); return }
+    setSaving(true); setError(null)
+    const res = await fetch(`/api/places/${place.id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: editPlaceName, region: editPlaceRegion || null, country: editPlaceCountry || null,
+        aiSummary: editPlaceAiSummary || null,
+      }),
+    })
+    setSaving(false); setPendingAiConfirm(false)
+    if (res.ok) { onSaved(); onClose() } else setError('Erreur lors de la sauvegarde.')
+  }
+
+  async function handleSaveEventEdit() {
+    if (!event || !editEventTitle.trim()) return
+    const aiChanged = editEventAiSummary !== (event.ai_summary ?? '')
+    if (aiChanged && !pendingAiConfirm) { setPendingAiConfirm(true); return }
+    setSaving(true); setError(null)
+    const res = await fetch(`/api/life-events/${event.id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: editEventTitle,
+        year: editEventYear.trim() ? Number(editEventYear) : null,
+        month: editEventMonth.trim() ? Number(editEventMonth) : null,
+        day: editEventDay.trim() ? Number(editEventDay) : null,
+        yearEnd:  editEventIsRange && editEventYearEnd.trim()  ? Number(editEventYearEnd)  : null,
+        monthEnd: editEventIsRange && editEventMonthEnd.trim() ? Number(editEventMonthEnd) : null,
+        dayEnd:   editEventIsRange && editEventDayEnd.trim()   ? Number(editEventDayEnd)   : null,
+        aiSummary: editEventAiSummary || null,
+      }),
+    })
+    setSaving(false); setPendingAiConfirm(false)
+    if (res.ok) { onSaved(); onClose() } else setError('Erreur lors de la sauvegarde.')
   }
 
   async function handleDelete() {
@@ -160,7 +260,8 @@ export default function DetailPanel({
   const aiSummary = entity.type === 'person' ? person?.ai_summary
     : entity.type === 'place' ? place?.ai_summary
     : entity.type === 'alinea' ? alinea?.ai_memory
-    : null // life_event.ai_summary pas encore en base (cf. Conception-memoire-IA, chantier non fait)
+    : entity.type === 'life_event' ? event?.ai_summary
+    : null
 
   return (
     <>
@@ -189,28 +290,42 @@ export default function DetailPanel({
                 {entity.type === 'person' && person && mode === 'view' && (
                   <section className="flex flex-col gap-1 text-[13px] text-[#2C2825]">
                     {person.relation && <p><span className="text-[#8C8278]">Lien </span>{person.relation}</p>}
+                    {person.birth_year && (
+                      <p><span className="text-[#8C8278]">Né·e </span>
+                        {[person.birth_day, person.birth_month, person.birth_year].filter(Boolean).join('/')}
+                      </p>
+                    )}
                     {person.is_deceased && <p className="text-[#8C8278] italic">Décédé·e{person.death_year ? ` · ${person.death_year}` : ''}</p>}
+                    {person.email && <p><span className="text-[#8C8278]">Email </span>{person.email}</p>}
+                    {person.phone && <p><span className="text-[#8C8278]">Tél. </span>{person.phone}</p>}
                   </section>
                 )}
-                {entity.type === 'place' && place && (
+                {entity.type === 'place' && place && mode === 'view' && (
                   <section className="flex flex-col gap-1 text-[13px] text-[#2C2825]">
                     {(place.region || place.country) && (
                       <p className="text-[#8C8278]">{[place.region, place.country].filter(Boolean).join(' · ')}</p>
                     )}
                   </section>
                 )}
-                {entity.type === 'life_event' && event && (
+                {entity.type === 'life_event' && event && mode === 'view' && (
                   <section className="flex flex-col gap-1 text-[13px] text-[#2C2825]">
                     <p className="text-[#8C8278]">
-                      {event.year}{event.event_month ? `/${event.event_month}` : ''}{event.event_day ? `/${event.event_day}` : ''}
+                      {event.year == null ? 'à dater' : (
+                        <>
+                          {event.year}{event.event_month ? `/${event.event_month}` : ''}{event.event_day ? `/${event.event_day}` : ''}
+                          {event.year_end != null && event.year_end !== event.year && (
+                            <> → {event.year_end}{event.event_month_end ? `/${event.event_month_end}` : ''}{event.event_day_end ? `/${event.event_day_end}` : ''}</>
+                          )}
+                        </>
+                      )}
                       {' · '}{{ undocumented: 'non documenté', draft: 'brouillon', validated: 'validé' }[event.status]}
                     </p>
                     {event.life_phase_id && (
                       <p className="text-[#8C8278]">{phases.find(p => p.id === event.life_phase_id)?.name}</p>
                     )}
-                    {themes.filter(t => event.theme_ids.includes(t.id)).length > 0 && (
+                    {themes.filter(t => event.theme_ids?.includes(t.id)).length > 0 && (
                       <div className="flex flex-wrap gap-1.5 mt-1">
-                        {themes.filter(t => event.theme_ids.includes(t.id)).map(t => (
+                        {themes.filter(t => event.theme_ids?.includes(t.id)).map(t => (
                           <span key={t.id} className="flex items-center gap-1 text-[11px] text-[#8C8278]">
                             <span className="w-1.5 h-1.5 rounded-full" style={{ background: t.color }} />{t.name}
                           </span>
@@ -229,7 +344,7 @@ export default function DetailPanel({
                 )}
 
                 {/* Mémoire IA */}
-                {aiSummary && (
+                {aiSummary && mode === 'view' && (
                   <section className="bg-[#F2EDE5] rounded-xl px-4 py-3">
                     <p className="text-[10px] font-medium tracking-[0.1em] uppercase text-[#8C8278] mb-1.5">Mémoire IA</p>
                     <p className="text-[13px] text-[#2C2825] leading-relaxed italic">{aiSummary}</p>
@@ -305,12 +420,120 @@ export default function DetailPanel({
                            className="px-3 py-2 border border-[#E6DAC8] rounded-xl text-[14px] outline-none focus:border-[#9B5E3A]" />
                     <input value={editRelation} onChange={e => setEditRelation(e.target.value)} placeholder="Relation"
                            className="px-3 py-2 border border-[#E6DAC8] rounded-xl text-[14px] outline-none focus:border-[#9B5E3A]" />
+                    <div>
+                      <label className="text-[11px] text-[#8C8278] block mb-1">Naissance</label>
+                      <div className="flex gap-2">
+                        <input value={editBirthDay} onChange={e => setEditBirthDay(e.target.value)} placeholder="JJ" inputMode="numeric"
+                               className="w-16 px-3 py-2 border border-[#E6DAC8] rounded-xl text-[14px] outline-none focus:border-[#9B5E3A]" />
+                        <input value={editBirthMonth} onChange={e => setEditBirthMonth(e.target.value)} placeholder="MM" inputMode="numeric"
+                               className="w-16 px-3 py-2 border border-[#E6DAC8] rounded-xl text-[14px] outline-none focus:border-[#9B5E3A]" />
+                        <input value={editBirthYear} onChange={e => setEditBirthYear(e.target.value)} placeholder="AAAA" inputMode="numeric"
+                               className="w-24 px-3 py-2 border border-[#E6DAC8] rounded-xl text-[14px] outline-none focus:border-[#9B5E3A]" />
+                      </div>
+                    </div>
+                    <input value={editEmail} onChange={e => setEditEmail(e.target.value)} placeholder="Email" type="email"
+                           className="px-3 py-2 border border-[#E6DAC8] rounded-xl text-[14px] outline-none focus:border-[#9B5E3A]" />
+                    <input value={editPhone} onChange={e => setEditPhone(e.target.value)} placeholder="Téléphone" type="tel"
+                           className="px-3 py-2 border border-[#E6DAC8] rounded-xl text-[14px] outline-none focus:border-[#9B5E3A]" />
+                    <div>
+                      <label className="text-[11px] text-[#8C8278] block mb-1">Mémoire IA</label>
+                      <AutoTextarea value={editPersonAiSummary} onChange={v => { setEditPersonAiSummary(v); setPendingAiConfirm(false) }}
+                                className="w-full px-3 py-2 border border-[#E6DAC8] rounded-xl text-[13px] outline-none focus:border-[#9B5E3A] resize-none overflow-hidden" />
+                    </div>
+                    {pendingAiConfirm && (
+                      <p className="text-[12px] text-[#9B5E3A] bg-[#FAF0E4] border border-[#E8C9A8] rounded-lg px-3 py-2">
+                        Tu modifies ce que l&apos;IA a compris de cette personne — clique à nouveau sur Sauvegarder pour confirmer.
+                      </p>
+                    )}
                     {error && <p className="text-[12px] text-[#B0504A]">{error}</p>}
                     <div className="flex gap-2">
                       <button onClick={handleSaveEdit} disabled={saving || !editName.trim()} className="flex-1 px-4 py-2 bg-[#9B5E3A] text-white rounded-xl text-[13px] font-medium disabled:opacity-40">
-                        {saving ? 'Sauvegarde…' : 'Sauvegarder'}
+                        {saving ? 'Sauvegarde…' : pendingAiConfirm ? 'Confirmer la modification' : 'Sauvegarder'}
                       </button>
-                      <button onClick={() => setMode('view')} className="px-4 py-2 border border-[#E6DAC8] rounded-xl text-[13px]">Annuler</button>
+                      <button onClick={() => { setMode('view'); setPendingAiConfirm(false) }} className="px-4 py-2 border border-[#E6DAC8] rounded-xl text-[13px]">Annuler</button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Édition — lieu */}
+                {entity.type === 'place' && place && mode === 'edit' && (
+                  <div className="flex flex-col gap-3">
+                    <input value={editPlaceName} onChange={e => setEditPlaceName(e.target.value)} placeholder="Nom"
+                           className="px-3 py-2 border border-[#E6DAC8] rounded-xl text-[14px] outline-none focus:border-[#9B5E3A]" />
+                    <input value={editPlaceRegion} onChange={e => setEditPlaceRegion(e.target.value)} placeholder="Région"
+                           className="px-3 py-2 border border-[#E6DAC8] rounded-xl text-[14px] outline-none focus:border-[#9B5E3A]" />
+                    <input value={editPlaceCountry} onChange={e => setEditPlaceCountry(e.target.value)} placeholder="Pays"
+                           className="px-3 py-2 border border-[#E6DAC8] rounded-xl text-[14px] outline-none focus:border-[#9B5E3A]" />
+                    <div>
+                      <label className="text-[11px] text-[#8C8278] block mb-1">Mémoire IA</label>
+                      <AutoTextarea value={editPlaceAiSummary} onChange={v => { setEditPlaceAiSummary(v); setPendingAiConfirm(false) }}
+                                className="w-full px-3 py-2 border border-[#E6DAC8] rounded-xl text-[13px] outline-none focus:border-[#9B5E3A] resize-none overflow-hidden" />
+                    </div>
+                    {pendingAiConfirm && (
+                      <p className="text-[12px] text-[#9B5E3A] bg-[#FAF0E4] border border-[#E8C9A8] rounded-lg px-3 py-2">
+                        Tu modifies ce que l&apos;IA a compris de ce lieu — clique à nouveau sur Sauvegarder pour confirmer.
+                      </p>
+                    )}
+                    {error && <p className="text-[12px] text-[#B0504A]">{error}</p>}
+                    <div className="flex gap-2">
+                      <button onClick={handleSavePlaceEdit} disabled={saving || !editPlaceName.trim()} className="flex-1 px-4 py-2 bg-[#9B5E3A] text-white rounded-xl text-[13px] font-medium disabled:opacity-40">
+                        {saving ? 'Sauvegarde…' : pendingAiConfirm ? 'Confirmer la modification' : 'Sauvegarder'}
+                      </button>
+                      <button onClick={() => { setMode('view'); setPendingAiConfirm(false) }} className="px-4 py-2 border border-[#E6DAC8] rounded-xl text-[13px]">Annuler</button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Édition — événement */}
+                {entity.type === 'life_event' && event && mode === 'edit' && (
+                  <div className="flex flex-col gap-3">
+                    <input value={editEventTitle} onChange={e => setEditEventTitle(e.target.value)} placeholder="Titre"
+                           className="px-3 py-2 border border-[#E6DAC8] rounded-xl text-[14px] outline-none focus:border-[#9B5E3A]" />
+                    <div>
+                      <label className="text-[11px] text-[#8C8278] block mb-1">Date</label>
+                      <div className="flex gap-2">
+                        <input value={editEventDay} onChange={e => setEditEventDay(e.target.value)} placeholder="JJ" inputMode="numeric"
+                               className="w-16 px-3 py-2 border border-[#E6DAC8] rounded-xl text-[14px] outline-none focus:border-[#9B5E3A]" />
+                        <input value={editEventMonth} onChange={e => setEditEventMonth(e.target.value)} placeholder="MM" inputMode="numeric"
+                               className="w-16 px-3 py-2 border border-[#E6DAC8] rounded-xl text-[14px] outline-none focus:border-[#9B5E3A]" />
+                        <input value={editEventYear} onChange={e => setEditEventYear(e.target.value)} placeholder="AAAA" inputMode="numeric"
+                               className="w-24 px-3 py-2 border border-[#E6DAC8] rounded-xl text-[14px] outline-none focus:border-[#9B5E3A]" />
+                      </div>
+                      <p className="text-[10px] text-[#C4BDB6] italic mt-1">Vide = à dater</p>
+                    </div>
+                    <label className="flex items-center gap-2 text-[13px] text-[#2C2825] cursor-pointer">
+                      <input type="checkbox" checked={editEventIsRange} onChange={e => setEditEventIsRange(e.target.checked)} className="accent-[#9B5E3A]" />
+                      Événement sur une période (pas ponctuel)
+                    </label>
+                    {editEventIsRange && (
+                      <div>
+                        <label className="text-[11px] text-[#8C8278] block mb-1">Date de fin</label>
+                        <div className="flex gap-2">
+                          <input value={editEventDayEnd} onChange={e => setEditEventDayEnd(e.target.value)} placeholder="JJ" inputMode="numeric"
+                                 className="w-16 px-3 py-2 border border-[#E6DAC8] rounded-xl text-[14px] outline-none focus:border-[#9B5E3A]" />
+                          <input value={editEventMonthEnd} onChange={e => setEditEventMonthEnd(e.target.value)} placeholder="MM" inputMode="numeric"
+                                 className="w-16 px-3 py-2 border border-[#E6DAC8] rounded-xl text-[14px] outline-none focus:border-[#9B5E3A]" />
+                          <input value={editEventYearEnd} onChange={e => setEditEventYearEnd(e.target.value)} placeholder="AAAA" inputMode="numeric"
+                                 className="w-24 px-3 py-2 border border-[#E6DAC8] rounded-xl text-[14px] outline-none focus:border-[#9B5E3A]" />
+                        </div>
+                      </div>
+                    )}
+                    <div>
+                      <label className="text-[11px] text-[#8C8278] block mb-1">Mémoire IA</label>
+                      <AutoTextarea value={editEventAiSummary} onChange={v => { setEditEventAiSummary(v); setPendingAiConfirm(false) }}
+                                className="w-full px-3 py-2 border border-[#E6DAC8] rounded-xl text-[13px] outline-none focus:border-[#9B5E3A] resize-none overflow-hidden" />
+                    </div>
+                    {pendingAiConfirm && (
+                      <p className="text-[12px] text-[#9B5E3A] bg-[#FAF0E4] border border-[#E8C9A8] rounded-lg px-3 py-2">
+                        Tu modifies ce que l&apos;IA a compris de cet événement — clique à nouveau sur Sauvegarder pour confirmer.
+                      </p>
+                    )}
+                    {error && <p className="text-[12px] text-[#B0504A]">{error}</p>}
+                    <div className="flex gap-2">
+                      <button onClick={handleSaveEventEdit} disabled={saving || !editEventTitle.trim()} className="flex-1 px-4 py-2 bg-[#9B5E3A] text-white rounded-xl text-[13px] font-medium disabled:opacity-40">
+                        {saving ? 'Sauvegarde…' : pendingAiConfirm ? 'Confirmer la modification' : 'Sauvegarder'}
+                      </button>
+                      <button onClick={() => { setMode('view'); setPendingAiConfirm(false) }} className="px-4 py-2 border border-[#E6DAC8] rounded-xl text-[13px]">Annuler</button>
                     </div>
                   </div>
                 )}
@@ -370,8 +593,26 @@ export default function DetailPanel({
               <button onClick={() => setMode('delete')} className="px-3 py-1.5 text-[12px] text-[#CC4444] hover:bg-[#FFF0F0] rounded-lg">Supprimer</button>
             </div>
           )}
+          {(entity.type === 'place' || entity.type === 'life_event') && mode === 'view' && !loading && (
+            <div className="ml-auto flex items-center gap-1">
+              <button onClick={() => setMode('edit')} className="px-3 py-1.5 text-[12px] text-[#8C8278] hover:text-[#2C2825]">Modifier</button>
+            </div>
+          )}
         </div>
       </div>
     </>
   )
+}
+
+// Hauteur qui suit le contenu plutôt qu'une taille fixe (rows) trop courte
+// pour une synthèse IA longue, ou inutilement grande pour une courte.
+function AutoTextarea({ value, onChange, className }: { value: string; onChange: (v: string) => void; className: string }) {
+  const ref = useRef<HTMLTextAreaElement>(null)
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${el.scrollHeight}px`
+  }, [value])
+  return <textarea ref={ref} value={value} onChange={e => onChange(e.target.value)} rows={3} className={className} />
 }
