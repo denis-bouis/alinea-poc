@@ -3,7 +3,7 @@ import { NextRequest } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import {
   AGENT_TOOLS, READ_TOOL_NAMES, IMMEDIATE_WRITE_TOOL_NAMES, UI_SIGNAL_TOOL_NAMES, CONFIRM_WRITES_TOOL_NAME,
-  executeReadTool, executeFlagAmbiguous, labelForWrite, iconForWrite, applyWrite, sortPendingWrites,
+  executeReadTool, executeFlagAmbiguous, executeSetChatLanguage, labelForWrite, iconForWrite, applyWrite, sortPendingWrites,
   type PendingWrite, type PendingWriteResult,
 } from '@/lib/agent/tools'
 
@@ -18,7 +18,13 @@ function dateContext(): string {
   return `## Repère temporel\n\nNous sommes le ${today}. Base-toi sur cette date réelle pour situer les événements dans le temps (passé/présent/futur) — pas sur ta date d'entraînement, qui n'a aucun rapport avec la date actuelle.\n\n`
 }
 
-const PERSONALITY = `Tu es Alinéa, compagnon de mémoire — à la fois confident bienveillant, biographe et guide introspectif.
+function buildPersonality(chatLanguage: string | null): string {
+  const language = chatLanguage?.trim() || 'français'
+  return `${PERSONALITY_BASE}
+- Langue : ${language} exclusivement — même si l'utilisateur t'écrit ou te parle dans une autre langue, tu réponds en ${language}`
+}
+
+const PERSONALITY_BASE = `Tu es Alinéa, compagnon de mémoire — à la fois confident bienveillant, biographe et guide introspectif.
 
 Ta mission : aider l'utilisateur à raconter sa vie sous forme de récit structuré, en faisant émerger souvenirs, émotions, personnes importantes, lieux et événements marquants.
 
@@ -46,8 +52,7 @@ Tu alternes entre 4 modes selon le moment :
 - Une seule question à la fois
 - Phrases courtes, ton naturel — jamais technique ou froid
 - Pas de liste à puces, pas de titres
-- Si l'utilisateur évoque quelque chose de difficile : reconnaître la difficulté, ralentir, rester simple
-- Langue : français uniquement`
+- Si l'utilisateur évoque quelque chose de difficile : reconnaître la difficulté, ralentir, rester simple`
 
 const DRAFT_SIGNAL = `## Signal de fin — brouillon d'alinéa
 
@@ -78,10 +83,12 @@ Tu disposes d'outils pour consulter et faire évoluer la mémoire de vie (person
 11. **Mémorisation d'un alinéa strictement encadrée.** N'appelle seed_alinea QUE si les deux conditions sont réunies : (a) le focus de la conversation porte sur un événement précis (contexte fourni, ou posé via set_focus/upsert_life_event dans l'échange), ET (b) l'utilisateur a explicitement formulé lui-même le contenu à retenir. Ne mémorise jamais un alinéa sur simple émergence d'une trame narrative — la rédaction d'un alinéa est toujours une action volontaire de l'utilisateur, jamais une initiative silencieuse de ta part.
 12. **Toujours chercher un rattachement thématique.** Symétrique de la règle 10 : dès qu'un événement évoque clairement un sujet récurrent (ex. randonnée, voyage, un métier...), cherche une thématique existante (search_themes) et propose de l'y rattacher ; si aucune ne correspond, propose_theme puis rattache. Ne laisse jamais un événement thématiquement évident sans thématique proposée.
 13. **Synthèse d'un événement.** life_event dispose d'un ai_summary, distinct du contenu de chaque alinéa qui s'y rattache. Quand un seed_alinea confirmé enrichit la vision d'ensemble de son événement, mets à jour cette synthèse via upsert_life_event (life_event_id + ai_summary fusionné avec l'existant, jamais juxtaposé) — indépendamment du nombre d'alinéas déjà rattachés à cet événement.
-14. **Date d'un événement.** Si elle n'est pas mentionnée, demande-la avant de créer l'événement (upsert_life_event) ; si l'utilisateur ne la connaît pas ou ne veut pas la préciser, crée-le sans année plutôt que de deviner l'année en cours. Si l'événement couvre une période plutôt qu'un jour précis, précise aussi year_end (et month_end/day_end si pertinent).`
+14. **Date d'un événement.** Si elle n'est pas mentionnée, demande-la avant de créer l'événement (upsert_life_event) ; si l'utilisateur ne la connaît pas ou ne veut pas la préciser, crée-le sans année plutôt que de deviner l'année en cours. Si l'événement couvre une période plutôt qu'un jour précis, précise aussi year_end (et month_end/day_end si pertinent).
+15. **Changement de langue.** Si l'utilisateur demande explicitement de te parler dans une autre langue, appelle set_chat_language en tout premier dans ce message, sans texte avant — ton propre message continue alors ENTIÈREMENT dans la nouvelle langue, y compris l'accusé de réception. Ne mélange jamais deux langues dans une même réponse.`
 
 type AiProfile = {
   display_name: string | null
+  chat_language: string | null
   birth_year: number | null
   portrait: string | null
   narrative_style: string | null
@@ -139,8 +146,8 @@ function buildMemoryBlock(
   return '\n\n' + lines.join('\n')
 }
 
-function buildNewSystemPrompt(memoryBlock: string): string {
-  return `${PERSONALITY}${memoryBlock}
+function buildNewSystemPrompt(memoryBlock: string, chatLanguage: string | null): string {
+  return `${buildPersonality(chatLanguage)}${memoryBlock}
 
 ## Déroulement de la conversation
 
@@ -154,8 +161,8 @@ ${DRAFT_SIGNAL}
 ${AGENT_LOOP_RULES}`
 }
 
-function buildOnboardingMode1Prompt(memoryBlock: string): string {
-  return `${PERSONALITY}${memoryBlock}
+function buildOnboardingMode1Prompt(memoryBlock: string, chatLanguage: string | null): string {
+  return `${buildPersonality(chatLanguage)}${memoryBlock}
 
 ## Mode onboarding — première rencontre (Mode 1)
 
@@ -183,9 +190,9 @@ Collecte les personnes nommées et leurs liens au fil de la réponse — pas de 
 ${AGENT_LOOP_RULES}`
 }
 
-function buildEditSystemPrompt(existingContent: string, memoryBlock: string, aiMemory?: string): string {
+function buildEditSystemPrompt(existingContent: string, memoryBlock: string, chatLanguage: string | null, aiMemory?: string): string {
   const memSection = aiMemory ? `\n## Mémoire de la conversation originale\n\n${aiMemory}\n` : ''
-  return `${PERSONALITY}${memoryBlock}
+  return `${buildPersonality(chatLanguage)}${memoryBlock}
 ${memSection}
 ## Mode révision
 
@@ -211,6 +218,7 @@ export async function POST(request: NextRequest) {
   }
 
   let memoryBlock = ''
+  let chatLanguage: string | null = null
   let supabase: Awaited<ReturnType<typeof createClient>> | null = null
   let userId: string | null = null
 
@@ -222,7 +230,7 @@ export async function POST(request: NextRequest) {
       const [{ data: profile }, { data: rawEvents }, { data: rawAlineas }] = await Promise.all([
         supabase
           .from('v_ai_profile')
-          .select('display_name, birth_year, portrait, narrative_style, themes_summary, people_summary')
+          .select('display_name, chat_language, birth_year, portrait, narrative_style, themes_summary, people_summary')
           .eq('user_id', user.id)
           .single(),
         supabase
@@ -243,6 +251,7 @@ export async function POST(request: NextRequest) {
           (rawEvents ?? []) as CompactLifeEvent[],
           (rawAlineas ?? []) as CompactAlinea[],
         )
+        chatLanguage = (profile as AiProfile).chat_language
       }
     }
   } catch { /* continuer sans mémoire */ }
@@ -252,11 +261,16 @@ export async function POST(request: NextRequest) {
     && (incomingMessages[0] as Anthropic.MessageParam).role === 'user'
     && (incomingMessages[0] as Anthropic.MessageParam).content === '__onboarding_mode1__'
 
-  const systemPrompt = dateContext() + (existingContent
-    ? buildEditSystemPrompt(existingContent, memoryBlock, aiMemory)
+  // Recalculable en cours de boucle : si set_chat_language s'exécute pendant
+  // ce tour, les itérations suivantes du même échange doivent immédiatement
+  // basculer, sans attendre le prochain message de l'utilisateur.
+  const computeSystemPrompt = (lang: string | null) => dateContext() + (existingContent
+    ? buildEditSystemPrompt(existingContent, memoryBlock, lang, aiMemory)
     : isOnboardingMode1
-    ? buildOnboardingMode1Prompt(memoryBlock)
-    : buildNewSystemPrompt(memoryBlock))
+    ? buildOnboardingMode1Prompt(memoryBlock, lang)
+    : buildNewSystemPrompt(memoryBlock, lang))
+
+  let systemPrompt = computeSystemPrompt(chatLanguage)
 
   const effectiveMessages = isOnboardingMode1
     ? [{ role: 'user' as const, content: 'Bonjour' }]
@@ -323,6 +337,13 @@ export async function POST(request: NextRequest) {
                 } else if (block.name === 'clear_focus') {
                   focusSignal = { action: 'clear' }
                   content = 'Focus effacé.'
+                } else if (block.name === 'set_chat_language') {
+                  const result = await executeSetChatLanguage(block.input as Record<string, unknown>, supabase, userId)
+                  content = result.content
+                  if (result.language) {
+                    chatLanguage = result.language
+                    systemPrompt = computeSystemPrompt(chatLanguage)
+                  }
                 } else {
                   // Écriture différée : on enregistre la proposition, on ne l'exécute pas.
                   pendingWrites.push({ tool: block.name, input: block.input as Record<string, unknown> })

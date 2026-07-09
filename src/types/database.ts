@@ -17,6 +17,7 @@ type ProfileRow = {
   avatar_url: string | null
   onboarding_step: number     // 0 = non commencé, 10 = terminé
   tier: 'discovery' | 'memory'
+  chat_language: string | null  // texte libre, ex. "italien" — défaut français si absent
   created_at: string
 }
 
@@ -235,6 +236,7 @@ type AlineaPeopleRow = {
 type AiProfileView = {
   user_id: string
   display_name: string | null
+  chat_language: string | null
   birth_year: number | null
   portrait: string | null
   narrative_style: string | null

@@ -389,6 +389,21 @@ export const AGENT_TOOLS: Anthropic.Tool[] = [
     description: "Efface le focus courant — équivalent oral du bouton \"Effacer\" du bandeau de focus.",
     input_schema: { type: 'object' as const, properties: {}, required: [] },
   },
+  {
+    name: 'set_chat_language',
+    description:
+      "Change la langue de conversation — appelle-le dès que l'utilisateur demande explicitement de te parler dans une autre langue (ex. \"parle-moi en italien\"). " +
+      "S'exécute immédiatement (pas de confirmation à demander, c'est une préférence d'interaction, pas une donnée de mémoire). " +
+      "N'écris AUCUN texte avant cet appel dans ce message — appelle-le en tout premier, puis poursuis ta réponse ENTIÈREMENT dans la nouvelle langue à partir de ce moment. " +
+      "Sans demande explicite de l'utilisateur, n'appelle jamais cet outil de toi-même.",
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        language: { type: 'string', description: "nom de la langue, dans cette langue si possible, ex. 'italiano', 'English'" },
+      },
+      required: ['language'],
+    },
+  },
 ]
 
 export const READ_TOOL_NAMES = new Set([
@@ -546,6 +561,18 @@ export async function executeFlagAmbiguous(
     payload: payload ?? {},
   })
   return error ? `Échec du dépôt en file de révision : ${error.message}` : 'Déposé en file de révision.'
+}
+
+export async function executeSetChatLanguage(
+  input: Record<string, unknown>,
+  supabase: Supa,
+  userId: string,
+): Promise<{ content: string; language: string | null }> {
+  const { language } = input as { language: string }
+  const { error } = await supabase.from('profiles').update({ chat_language: language }).eq('id', userId)
+  return error
+    ? { content: `Échec de l'enregistrement de la langue : ${error.message}`, language: null }
+    : { content: `Langue basculée sur ${language}. Poursuis intégralement dans cette langue à partir de maintenant.`, language }
 }
 
 // ============================================================
