@@ -2,11 +2,13 @@
 
 import { useEffect, useRef } from 'react'
 import * as d3 from 'd3'
-import type { Person, PersonRelation } from '@/types/domain'
+import type { Person, PersonRelation, PeopleRelationType } from '@/types/domain'
+import { FAMILY_GENERATION_DELTA, FAMILY_NODE_LABEL } from '@/types/domain'
 
 type Props = {
   people:         Person[]
-  relations?:     PersonRelation[]
+  relations:      PersonRelation[]
+  selfId:         string | null
   userName:       string
   onPersonClick?: (person: Person) => void
   onUserClick?:   () => void
@@ -27,25 +29,7 @@ const GEN_H   = 90
 const NODE_W  = 80
 const LABEL_H = 32   // espace réservé sous chaque cercle (prénom + relation)
 
-// ── Génération de base (sans résolution de contexte) ─────────────────────────
-function inferGenBasic(relation: string): number {
-  const r = relation.toLowerCase()
-  if (/arrière[- ]grand/.test(r))                                               return -3
-  if (/grands?[- ]?(père|mère|pa|ma|parent)|aïeul|bisaïeul/.test(r))           return -2
-  if (/père|mère|papa|maman|beau[- ]?père|belle[- ]?mère|oncle|tante|parrain|marraine/.test(r)) return -1
-  if (/petite?[- ]?(fils|fille|enfant)/.test(r))                                return  2
-  if (/fils|fille|beau[- ]?fils|belle[- ]?fille|enfant|neveu|nièce/.test(r))   return  1
-  return 0
-}
-
-function isSibling(r: string) {
-  return /frère|sœur|soeur|cousin|cousine/.test(r.toLowerCase())
-}
-function isSpouseRel(r: string) {
-  return /conjoint|époux|épouse|femme|mari|compagnon|compagne|partenaire|concubin/.test(r.toLowerCase())
-}
-
-export default function FamilyTree({ people, userName, onPersonClick, onUserClick }: Props) {
+export default function FamilyTree({ people, relations, selfId, userName, onPersonClick, onUserClick }: Props) {
   const svgRef = useRef<SVGSVGElement>(null)
 
   useEffect(() => {
@@ -58,7 +42,54 @@ export default function FamilyTree({ people, userName, onPersonClick, onUserClic
     const W = svgEl.clientWidth  || 300
     const H = svgEl.clientHeight || 400
 
-    const family = people.filter(p => p.relation_type === 'famille')
+    if (!selfId) {
+      sel.append('text').attr('x', W / 2).attr('y', H / 2)
+        .attr('text-anchor', 'middle').attr('font-size', '12px')
+        .attr('fill', C.muted).attr('font-family', 'inherit')
+        .text('Aucun membre de la famille')
+      return
+    }
+
+    // ── Relations directes moi → personne, structurées (migration 021) ────────
+    // Remplace l'ancien regex sur people.relation (texte libre, cassé par la
+    // langue de conversation) : relation_type est un enum fixe, indépendant
+    // de la langue, dérivé automatiquement dans les deux sens par les tools
+    // link_people_relation / declare_family_unit.
+    const selfRelByPersonId = new Map<string, PeopleRelationType>()
+    for (const r of relations) {
+      if (r.person_a_id === selfId && FAMILY_GENERATION_DELTA[r.relation_type] !== undefined) {
+        selfRelByPersonId.set(r.person_b_id, r.relation_type)
+      }
+    }
+
+    const peopleById = new Map(people.map(p => [p.id, p]))
+    const nameToGen = new Map<string, number>()   // clé = person.id (pas le nom, plus fiable)
+    const family: Person[] = []
+
+    for (const p of people) {
+      const relType = selfRelByPersonId.get(p.id)
+      if (!relType) continue
+      family.push(p)
+      nameToGen.set(p.id, FAMILY_GENERATION_DELTA[relType] ?? 0)
+    }
+
+    // ── Pass 2 : conjoint d'un proche non directement lié à moi ───────────────
+    // Ex. "ma grand-mère Renée, mariée à Jean" sans déclarer Jean comme
+    // grand-père directement — Jean est positionné à la génération de Renée
+    // via l'arête partner_of structurée entre eux (plus de regex "épouse de X").
+    const familyIds = new Set(family.map(p => p.id))
+    for (const r of relations) {
+      if (r.relation_type !== 'partner_of') continue
+      const [inId, outId] = familyIds.has(r.person_a_id) ? [r.person_a_id, r.person_b_id]
+        : familyIds.has(r.person_b_id) ? [r.person_b_id, r.person_a_id]
+        : [null, null]
+      if (!inId || !outId || familyIds.has(outId)) continue
+      const partner = peopleById.get(outId)
+      if (!partner) continue
+      family.push(partner)
+      familyIds.add(outId)
+      nameToGen.set(outId, nameToGen.get(inId) ?? 0)
+    }
 
     if (family.length === 0) {
       sel.append('text').attr('x', W / 2).attr('y', H / 2)
@@ -68,43 +99,19 @@ export default function FamilyTree({ people, userName, onPersonClick, onUserClic
       return
     }
 
-    // ── Passe 1 : inférence de base ───────────────────────────────────────────
-    const nameToGen = new Map<string, number>()
-    for (const p of family) {
-      nameToGen.set(p.name.toLowerCase(), inferGenBasic(p.relation ?? ''))
-    }
-
-    // ── Passe 2 : résolution "épouse/compagnon de X" ──────────────────────────
-    // Si X est à gen +1, la personne est aussi à gen +1 (beau-fils, belle-fille…)
-    for (const p of family) {
-      const rel = p.relation ?? ''
-      if (!isSpouseRel(rel)) continue
-      const m = rel.toLowerCase().match(/\bde\s+([a-zàâéèêëîïôùûüæœç]+)/i)
-      if (!m) continue
-      const refName = m[1].toLowerCase()
-      const refPerson = family.find(fp => fp.name.toLowerCase().startsWith(refName))
-      if (!refPerson) continue
-      const refGen = nameToGen.get(refPerson.name.toLowerCase())
-      if (refGen !== undefined && refGen !== 0) {
-        nameToGen.set(p.name.toLowerCase(), refGen)
-      }
-    }
-
     // ── Grouper par génération ────────────────────────────────────────────────
     const byGen = new Map<number, Person[]>()
     for (const p of family) {
-      const g = nameToGen.get(p.name.toLowerCase()) ?? 0
+      const g = nameToGen.get(p.id) ?? 0
       if (!byGen.has(g)) byGen.set(g, [])
       byGen.get(g)!.push(p)
     }
 
-    // Séparer gen 0 : frères/sœurs à gauche, conjoint direct de Denis à droite
+    // Séparer gen 0 : conjoint direct de moi à droite, tout le reste
+    // (frères/sœurs/cousins, ou conjoint d'un proche ajouté en pass 2) à gauche
     const gen0raw = byGen.get(0) ?? []
-    const siblings  = gen0raw.filter(p => isSibling(p.relation ?? ''))
-    const spouses0  = gen0raw.filter(p => isSpouseRel(p.relation ?? '') && (nameToGen.get(p.name.toLowerCase()) ?? 0) === 0)
-    const others0   = gen0raw.filter(p => !isSibling(p.relation ?? '') && !((nameToGen.get(p.name.toLowerCase()) ?? 0) === 0 && isSpouseRel(p.relation ?? '')))
-    const leftRow   = [...siblings, ...others0]
-    const rightRow  = [...spouses0]
+    const leftRow  = gen0raw.filter(p => selfRelByPersonId.get(p.id) !== 'partner_of')
+    const rightRow = gen0raw.filter(p => selfRelByPersonId.get(p.id) === 'partner_of')
 
     const otherGens = [...byGen.keys()].filter(g => g !== 0).sort((a, b) => a - b)
 
@@ -152,7 +159,7 @@ export default function FamilyTree({ people, userName, onPersonClick, onUserClic
         .attr('stroke-linecap', 'round')
 
     // ── Helper : cible Y du trunk pour la génération g ───────────────────────
-    // Vers le prochain échelon occupé en direction de Denis
+    // Vers le prochain échelon occupé en direction de moi
     function trunkTargetY(g: number): number {
       if (g < 0) {
         const closer = otherGens.filter(og => og > g && og < 0)
@@ -184,9 +191,9 @@ export default function FamilyTree({ people, userName, onPersonClick, onUserClic
           .attr('r', 3).attr('fill', C.couple)
       }
 
-      // Trunk vertical du milieu de la barre vers la prochaine génération / Denis
+      // Trunk vertical du milieu de la barre vers la prochaine génération / moi
       const targetY = trunkTargetY(g)
-      // Partir du bord du cercle le plus proche de Denis
+      // Partir du bord du cercle le plus proche de moi
       const startY  = above ? rowY + R : rowY - R
       seg(midX, startY, midX, targetY, C.line)
 
@@ -198,13 +205,13 @@ export default function FamilyTree({ people, userName, onPersonClick, onUserClic
     }
 
     // ── Connecteurs gen 0 ─────────────────────────────────────────────────────
-    // Frères/sœurs : trait horizontal jusqu'à Denis
+    // Frères/sœurs/cousins : trait horizontal jusqu'à moi
     if (leftRow.length) {
       const lx = pos.get(leftRow[0].id)!.x
       seg(lx + R, userY, userX - R, userY, C.line)
     }
-    // Conjoint direct de Denis : double trait
-    spouses0.forEach(p => {
+    // Conjoint direct : double trait
+    rightRow.forEach(p => {
       const px = pos.get(p.id)!.x
       const x1 = userX + R, x2 = px - R
       seg(x1, userY - 3, x2, userY - 3, C.couple)
@@ -261,10 +268,15 @@ export default function FamilyTree({ people, userName, onPersonClick, onUserClic
     for (const p of family) {
       const np = pos.get(p.id)
       if (!np) continue
-      drawNode(np.x, np.y, p.name, p.relation ?? '', false, p.is_deceased ?? false, () => onPersonClick?.(p))
+      // Sous-titre dérivé du relation_type structuré (toujours en français, ne
+      // suit pas la langue de conversation) — ou "conjoint(e)" par défaut pour
+      // les personnes ajoutées uniquement via une arête partner_of (pass 2).
+      const relType = selfRelByPersonId.get(p.id)
+      const sub = relType ? (FAMILY_NODE_LABEL[relType] ?? '') : 'conjoint(e)'
+      drawNode(np.x, np.y, p.name, sub, false, p.is_deceased ?? false, () => onPersonClick?.(p))
     }
 
-  }, [people, userName]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [people, relations, selfId, userName]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return <svg ref={svgRef} className="w-full h-full block" />
 }

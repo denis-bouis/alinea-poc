@@ -156,6 +156,7 @@ type PersonRow = {
   ai_summary: string | null
   alinea_count: number   // maintenu par trigger
   pending_qualification: boolean
+  is_self: boolean       // migration 021
   created_at: string
   updated_at: string
 }
@@ -368,7 +369,7 @@ export type Database = {
           alinea_count?: number
           pending_qualification?: boolean
         }
-        Update: Partial<Omit<PersonRow, 'id' | 'user_id' | 'created_at' | 'updated_at'>>
+        Update: Partial<Omit<PersonRow, 'id' | 'user_id' | 'created_at' | 'updated_at' | 'is_self'>>
         Relationships: []
       }
       places: {

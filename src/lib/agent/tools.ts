@@ -35,11 +35,22 @@ export const SYMMETRIC_RELATION_TYPES = new Set<PeopleRelationType>([
   'partner_of',
   'friend_of',
   'colleague_of',
+  'cousin_of',
 ])
 
 export const INVERSE_RELATION_TYPE: Partial<Record<PeopleRelationType, PeopleRelationType>> = {
   parent_of: 'child_of',
   child_of: 'parent_of',
+  grandparent_of: 'grandchild_of',
+  grandchild_of: 'grandparent_of',
+  great_grandparent_of: 'great_grandchild_of',
+  great_grandchild_of: 'great_grandparent_of',
+  aunt_uncle_of: 'niece_nephew_of',
+  niece_nephew_of: 'aunt_uncle_of',
+  parent_in_law_of: 'child_in_law_of',
+  child_in_law_of: 'parent_in_law_of',
+  godparent_of: 'godchild_of',
+  godchild_of: 'godparent_of',
 }
 
 export type RelationInsert = {
@@ -152,7 +163,12 @@ export const AGENT_TOOLS: Anthropic.Tool[] = [
       properties: {
         person_id: { type: 'string', description: 'si connu via get_person — évite une nouvelle recherche par nom' },
         name: { type: 'string' },
-        relation: { type: 'string', description: 'texte libre, ex. "sœur de Laurence"' },
+        relation: {
+          type: 'string',
+          description:
+            'texte libre et narratif, affiché en sous-titre sous cette personne (ex. "sœur de Laurence, on ne s\'est jamais perdues de vue") — suit la langue de conversation comme ai_summary. ' +
+            "NE structure PAS l'arbre généalogique ni aucun lien vers l'utilisateur — pour ça, utilise link_people_relation avec \"moi\" comme personne cible.",
+        },
         relation_type: { type: 'string', enum: ['famille', 'amitié', 'professionnel', 'romantique', 'autre'] },
         birth_year: { type: 'number' },
         birth_month: { type: 'number' },
@@ -172,13 +188,26 @@ export const AGENT_TOOLS: Anthropic.Tool[] = [
   },
   {
     name: 'link_people_relation',
-    description: "Déclare un lien direct entre deux personnes déjà connues (par leur nom). Dérive automatiquement la relation miroir (symétrique ou inverse).",
+    description:
+      "Déclare un lien direct entre deux personnes déjà connues (par leur nom). Dérive automatiquement la relation miroir (symétrique ou inverse). " +
+      "Utilise \"moi\" comme person_a_name ou person_b_name pour déclarer un lien direct entre une personne et l'UTILISATEUR lui-même (ex. \"Renée est ma grand-mère\" → person_a_name: \"Renée\", person_b_name: \"moi\", relation_type: \"grandparent_of\"). " +
+      "C'est le SEUL moyen de rattacher quelqu'un à l'utilisateur — n'utilise jamais upsert_person.relation pour ça.",
     input_schema: {
       type: 'object' as const,
       properties: {
-        person_a_name: { type: 'string' },
-        person_b_name: { type: 'string' },
-        relation_type: { type: 'string', enum: ['parent_of', 'child_of', 'sibling_of', 'partner_of', 'friend_of', 'colleague_of', 'mentor_of'] },
+        person_a_name: { type: 'string', description: 'nom de la personne, ou "moi" pour l\'utilisateur' },
+        person_b_name: { type: 'string', description: 'nom de la personne, ou "moi" pour l\'utilisateur' },
+        relation_type: {
+          type: 'string',
+          enum: [
+            'parent_of', 'child_of', 'sibling_of', 'partner_of',
+            'grandparent_of', 'grandchild_of', 'great_grandparent_of', 'great_grandchild_of',
+            'aunt_uncle_of', 'niece_nephew_of', 'cousin_of',
+            'parent_in_law_of', 'child_in_law_of', 'godparent_of', 'godchild_of',
+            'friend_of', 'colleague_of', 'mentor_of',
+          ],
+          description: 'relation directe, ex. "Renée grandparent_of moi" = Renée est ma grand-mère — pas besoin de passer par la chaîne complète (parent de mon parent)',
+        },
         qualifier: { type: 'string', description: 'précision libre, ex. "demi-sœur"' },
       },
       required: ['person_a_name', 'person_b_name', 'relation_type'],
@@ -186,12 +215,14 @@ export const AGENT_TOOLS: Anthropic.Tool[] = [
   },
   {
     name: 'declare_family_unit',
-    description: "Déclare une cellule familiale complète (parents + enfants) — dérive automatiquement parent_of/child_of, fratrie, conjoints.",
+    description:
+      "Déclare une cellule familiale complète (parents + enfants) — dérive automatiquement parent_of/child_of, fratrie, conjoints. " +
+      "\"moi\" est un nom valide dans parent_names ou children_names pour inclure l'utilisateur lui-même (ex. \"mes parents Jean et Muriel, mon frère Laurent et moi\").",
     input_schema: {
       type: 'object' as const,
       properties: {
-        parent_names: { type: 'array', items: { type: 'string' }, description: '0 à 2 noms' },
-        children_names: { type: 'array', items: { type: 'string' } },
+        parent_names: { type: 'array', items: { type: 'string' }, description: '0 à 2 noms, "moi" accepté' },
+        children_names: { type: 'array', items: { type: 'string' }, description: '"moi" accepté' },
         union_type: { type: 'string', enum: ['married', 'civil_union', 'cohabiting', 'unknown'] },
         union_year: { type: 'number' },
       },
@@ -467,7 +498,7 @@ export async function executeReadTool(
       const { query } = input as { query: string }
       const { data } = await supabase.from('people')
         .select('id, name, relation, relation_type, birth_year, is_deceased')
-        .eq('user_id', userId).ilike('name', `%${query}%`).limit(5)
+        .eq('user_id', userId).eq('is_self', false).ilike('name', `%${query}%`).limit(5)
       if (!data || data.length === 0) return 'Aucune personne trouvée.'
       return data.map(p => `[${p.id}] ${p.name}${p.relation ? ` (${p.relation})` : ''}${p.is_deceased ? ' [décédé·e]' : ''}`).join('\n')
     }
@@ -636,8 +667,19 @@ export function iconForWrite(tool: string): string {
 }
 
 async function findPersonIdByName(supabase: Supa, userId: string, name: string): Promise<string | null> {
-  const { data } = await supabase.from('people').select('id').eq('user_id', userId).ilike('name', name).limit(1).single()
+  const { data } = await supabase.from('people').select('id').eq('user_id', userId).eq('is_self', false).ilike('name', name).limit(1).single()
   return data?.id ?? null
+}
+
+// "moi" (insensible à la casse) résout vers le nœud is_self de l'utilisateur —
+// seule façon de déclarer un lien structuré entre une personne et l'utilisateur
+// lui-même (migration 021, il n'existait auparavant aucun moyen de le faire).
+async function resolvePersonRef(supabase: Supa, userId: string, name: string): Promise<string | null> {
+  if (name.trim().toLowerCase() === 'moi') {
+    const { data } = await supabase.from('people').select('id').eq('user_id', userId).eq('is_self', true).single()
+    return data?.id ?? null
+  }
+  return findPersonIdByName(supabase, userId, name)
 }
 
 export async function applyWrite(write: PendingWrite, supabase: Supa, userId: string): Promise<PendingWriteResult> {
@@ -693,8 +735,8 @@ export async function applyWrite(write: PendingWrite, supabase: Supa, userId: st
       case 'link_people_relation': {
         const d = write.input as { person_a_name: string; person_b_name: string; relation_type: PeopleRelationType; qualifier?: string }
         const [aId, bId] = await Promise.all([
-          findPersonIdByName(supabase, userId, d.person_a_name),
-          findPersonIdByName(supabase, userId, d.person_b_name),
+          resolvePersonRef(supabase, userId, d.person_a_name),
+          resolvePersonRef(supabase, userId, d.person_b_name),
         ])
         if (!aId || !bId) return { tool: write.tool, label, saved: false, error: 'Personne introuvable — créer la fiche avant de déclarer le lien.' }
         const rows = deriveRelationPair(
@@ -707,8 +749,8 @@ export async function applyWrite(write: PendingWrite, supabase: Supa, userId: st
 
       case 'declare_family_unit': {
         const d = write.input as { parent_names: string[]; children_names: string[]; union_type?: string; union_year?: number }
-        const parentIds = (await Promise.all(d.parent_names.map(n => findPersonIdByName(supabase, userId, n)))).filter((x): x is string => !!x)
-        const childIds = (await Promise.all(d.children_names.map(n => findPersonIdByName(supabase, userId, n)))).filter((x): x is string => !!x)
+        const parentIds = (await Promise.all(d.parent_names.map(n => resolvePersonRef(supabase, userId, n)))).filter((x): x is string => !!x)
+        const childIds = (await Promise.all(d.children_names.map(n => resolvePersonRef(supabase, userId, n)))).filter((x): x is string => !!x)
         if (parentIds.length === 0 && childIds.length === 0) {
           return { tool: write.tool, label, saved: false, error: 'Aucune personne trouvée — créer les fiches avant de déclarer la cellule familiale.' }
         }

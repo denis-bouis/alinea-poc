@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/client'
 import type { EmotionTag, ThematicCategory, VisibilityLevel } from '@/types/database'
 import type Anthropic from '@anthropic-ai/sdk'
 import { parseFrenchDate } from '@/lib/parse-date'
+import { renderInlineMarkdown } from '@/lib/inline-markdown'
 
 type Message = { role: 'user' | 'assistant'; content: string }
 type AlineaDraft = {
@@ -299,7 +300,7 @@ export default function EditAlineaPage() {
                   ? 'bg-accent text-cream'
                   : 'bg-cream border border-border text-ink'
               }`}>
-                {m.content || <span className="opacity-40 italic">…</span>}
+                {m.content ? renderInlineMarkdown(m.content) : <span className="opacity-40 italic">…</span>}
               </div>
             </div>
           ))}

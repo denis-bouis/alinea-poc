@@ -24,6 +24,7 @@ type Props = {
   phases:        LifePhase[]
   people:        Person[]
   relations:     PersonRelation[]
+  selfId:        string | null
   birthYear:     number | null
   portrait:      UserMemory | null
   places:        Place[]
@@ -35,7 +36,7 @@ type Props = {
 }
 
 export default function TableauClient({
-  userName, onboardingStep, themes, events, phases, people, relations, birthYear, portrait,
+  userName, onboardingStep, themes, events, phases, people, relations, selfId, birthYear, portrait,
   places, alineas, alineaPeople, lifeEventPeople, alineaPlaces, lifeEventPlaces,
 }: Props) {
   const router = useRouter()
@@ -134,7 +135,11 @@ export default function TableauClient({
     if (!confirm('Supprimer toutes tes données et recommencer l\'onboarding ?')) return
     setResetting(true)
     await fetch('/api/debug/reset', { method: 'POST' })
-    router.push('/onboarding')
+    // Il n'existe pas de route /onboarding — l'onboarding est piloté par
+    // onboarding_step, refetché côté serveur sur /tableau. Un router.push
+    // vers la même route ne remonterait pas les états locaux déjà initialisés
+    // (mobileCol, etc.) : rechargement complet nécessaire.
+    window.location.href = '/tableau'
   }
 
   const openDetail   = useCallback((ref: EntityRef) => setDetailStack(prev => [...prev, ref]), [])
@@ -204,7 +209,7 @@ export default function TableauClient({
       <div className="min-h-0 h-full overflow-hidden">
         <FichesColumn
           people={people} relations={relations} places={places} alineas={alineas} themes={themes}
-          userName={userName ?? ''}
+          userName={userName ?? ''} selfId={selfId}
           visiblePersonIds={visiblePersonIds} visiblePlaceIds={visiblePlaceIds} visibleAlineaIds={alineaVisibleIds}
           fullscreenPanel={fullscreenPanel} onSetFullscreen={setFullscreenPanel}
           onOpen={openDetail}
@@ -325,7 +330,7 @@ export default function TableauClient({
               {mobileCol === 'fiches' && (
                 <FichesColumn
                   people={people} relations={relations} places={places} alineas={alineas} themes={themes}
-                  userName={userName ?? ''}
+                  userName={userName ?? ''} selfId={selfId}
                   visiblePersonIds={visiblePersonIds} visiblePlaceIds={visiblePlaceIds} visibleAlineaIds={alineaVisibleIds}
                   fullscreenPanel={fullscreenPanel} onSetFullscreen={setFullscreenPanel}
                   onOpen={openDetail}
@@ -349,6 +354,8 @@ export default function TableauClient({
           entity={currentDetail}
           people={people}
           relations={relations}
+          selfId={selfId}
+          userName={userName ?? ''}
           themes={themes}
           phases={phases}
           events={events}

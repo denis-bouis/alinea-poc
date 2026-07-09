@@ -69,6 +69,9 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
   const { id } = await params
   const uid = user.id
 
+  const { data: target } = await supabase.from('people').select('is_self').eq('id', id).eq('user_id', uid).single()
+  if (target?.is_self) return NextResponse.json({ error: 'Impossible de supprimer le nœud "moi".' }, { status: 400 })
+
   // Supprimer les relations inter-personnes liées
   await supabase.from('people_relations')
     .delete()

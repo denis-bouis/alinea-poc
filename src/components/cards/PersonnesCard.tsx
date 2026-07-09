@@ -8,11 +8,13 @@ import type { EntityRef } from '@/components/DetailPanel'
 import DeceasedIcon from '@/components/DeceasedIcon'
 
 const FamilyTree = dynamic(() => import('@/components/FamilyTree'), { ssr: false })
+const RelationsGraph = dynamic(() => import('@/components/RelationsGraph'), { ssr: false })
 
 type Props = {
   people:       Person[]
   relations:    PersonRelation[]
   userName:     string
+  selfId:       string | null
   visibleIds:   Set<string> | null   // null = pas de filtre focus actif
   collapsed:    boolean
   onToggleCollapse: () => void
@@ -25,10 +27,10 @@ type Props = {
 }
 
 export default function PersonnesCard({
-  people, relations, userName, visibleIds, collapsed, onToggleCollapse, fullscreen, onToggleFullscreen,
+  people, relations, userName, selfId, visibleIds, collapsed, onToggleCollapse, fullscreen, onToggleFullscreen,
   onOpen, onFocus, onAddLink, onAddFamily,
 }: Props) {
-  const [view, setView] = useState<'liste' | 'arbre'>('liste')
+  const [view, setView] = useState<'liste' | 'arbre' | 'toile'>('liste')
   const shown = visibleIds ? people.filter(p => visibleIds.has(p.id)) : people
 
   return (
@@ -37,10 +39,10 @@ export default function PersonnesCard({
       fullscreen={fullscreen} onToggleFullscreen={onToggleFullscreen}
       headerExtra={
         <div className="flex items-center gap-0.5 bg-[#F2EDE5] rounded-md p-0.5 ml-1">
-          {(['liste', 'arbre'] as const).map(v => (
+          {(['liste', 'arbre', 'toile'] as const).map(v => (
             <button key={v} onClick={() => setView(v)}
                     className={['text-[10px] px-2 py-0.5 rounded transition-colors', view === v ? 'bg-white text-[#2C2825] font-medium' : 'text-[#8C8278]'].join(' ')}>
-              {v === 'liste' ? 'Liste' : 'Arbre'}
+              {v === 'liste' ? 'Liste' : v === 'arbre' ? 'Arbre' : 'Toile'}
             </button>
           ))}
         </div>
@@ -49,7 +51,14 @@ export default function PersonnesCard({
       {view === 'arbre' ? (
         <div className="h-full min-h-[280px]">
           <FamilyTree
-            people={shown} relations={relations} userName={userName}
+            people={shown} relations={relations} userName={userName} selfId={selfId}
+            onPersonClick={p => onOpen({ type: 'person', id: p.id, label: p.name })}
+          />
+        </div>
+      ) : view === 'toile' ? (
+        <div className="h-full min-h-[280px]">
+          <RelationsGraph
+            people={shown} relations={relations} userName={userName} selfId={selfId}
             onPersonClick={p => onOpen({ type: 'person', id: p.id, label: p.name })}
           />
         </div>

@@ -79,6 +79,13 @@ export default async function TableauPage() {
 
   const onboardingStep = (profile as { onboarding_step?: number } | null)?.onboarding_step ?? 0
 
+  // Le nœud "moi" (migration 021) existe dans people pour porter des liens
+  // structurés (people_relations) vers l'utilisateur — jamais affiché comme
+  // "une personne que je connais" dans les listes/cartes/recherches.
+  const allPeople = (people ?? []) as Person[]
+  const selfPerson = allPeople.find(p => p.is_self)
+  const displayPeople = allPeople.filter(p => !p.is_self)
+
   return (
     <TableauClient
       userName={profile?.display_name ?? null}
@@ -86,7 +93,8 @@ export default async function TableauPage() {
       themes={(themes ?? []) as Theme[]}
       events={enrichedEvents}
       phases={(phases ?? []) as LifePhase[]}
-      people={(people ?? []) as Person[]}
+      people={displayPeople}
+      selfId={selfPerson?.id ?? null}
       relations={(relations ?? []) as PersonRelation[]}
       birthYear={(memory as UserMemory | null)?.birth_year ?? null}
       portrait={(memory as UserMemory | null)}

@@ -3,6 +3,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { parseFrenchDate } from '@/lib/parse-date'
+import { renderInlineMarkdown } from '@/lib/inline-markdown'
 import type { Theme, LifeEvent } from '@/types/domain'
 import type { EmotionTag, ThematicCategory } from '@/types/database'
 import type { PendingWrite } from '@/app/api/memory/confirm/route'
@@ -538,7 +539,7 @@ export default function ChatPanel({ context, onboardingStep = 10, onLastMessage,
                 : 'bg-[#9B5E3A] self-end rounded-br-sm text-white text-[13.5px]',
             ].join(' ')}
           >
-            {m.text || <span className="opacity-40 italic">…</span>}
+            {m.text ? renderInlineMarkdown(m.text) : <span className="opacity-40 italic">…</span>}
           </div>
         ))}
 

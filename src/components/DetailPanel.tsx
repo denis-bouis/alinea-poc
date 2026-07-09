@@ -28,6 +28,8 @@ type Props = {
   entity:      EntityRef
   people:      Person[]
   relations:   PersonRelation[]
+  selfId:      string | null
+  userName:    string
   themes:      Theme[]
   phases:      LifePhase[]
   events:      LifeEvent[]
@@ -40,7 +42,7 @@ type Props = {
 }
 
 export default function DetailPanel({
-  entity, people, relations, themes, phases, events, onClose, onNavigate, onBack, onFocus, onSaved, onAddLink,
+  entity, people, relations, selfId, userName, themes, phases, events, onClose, onNavigate, onBack, onFocus, onSaved, onAddLink,
 }: Props) {
   const [loading, setLoading]   = useState(true)
   const [place,   setPlace]     = useState<PlaceData | null>(null)
@@ -417,14 +419,18 @@ export default function DetailPanel({
                         <div className="flex flex-col gap-1.5">
                           {own.map(r => {
                             const other = people.find(p => p.id === r.person_b_id)
+                            // Le nœud "moi" (is_self) est exclu de `people` — sans ce
+                            // repli, une relation déclarée vers l'utilisateur affichait "?".
+                            const isSelf = !other && r.person_b_id === selfId
+                            const otherName = other?.name ?? (isSelf ? (userName || 'Moi') : '?')
                             const label = RELATION_TYPE_LABEL[r.relation_type as PeopleRelationType] ?? r.relation_type
                             return (
                               <button
                                 key={r.id}
                                 onClick={() => other && onNavigate({ type: 'person', id: other.id, label: other.name })}
-                                className="flex items-center gap-2 text-[13px] text-[#2C2825] hover:text-[#9B5E3A] text-left"
+                                className={['flex items-center gap-2 text-[13px] text-[#2C2825] text-left', other ? 'hover:text-[#9B5E3A]' : 'cursor-default'].join(' ')}
                               >
-                                <span className="text-[#8C8278]">·</span>{other?.name ?? '?'}
+                                <span className="text-[#8C8278]">·</span>{otherName}
                                 <span className="text-[#8C8278] text-[11px]">{label}</span>
                               </button>
                             )

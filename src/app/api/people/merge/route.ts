@@ -16,6 +16,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid ids' }, { status: 400 })
   }
 
+  const { data: involved } = await supabase.from('people').select('id, is_self').eq('user_id', uid).in('id', [keepId, deleteId])
+  if (involved?.some(p => p.is_self)) {
+    return NextResponse.json({ error: 'Le nœud "moi" ne peut pas être fusionné.' }, { status: 400 })
+  }
+
   try {
     // 1. Récupérer toutes les relations du doublon
     const { data: relationsA } = await supabase.from('people_relations')

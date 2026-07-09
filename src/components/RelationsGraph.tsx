@@ -8,6 +8,7 @@ import { RELATION_TYPE_LABEL } from '@/types/domain'
 type Props = {
   people: Person[]
   relations: PersonRelation[]
+  selfId: string | null
   userName: string
   onPersonClick?: (person: Person) => void
   onUserClick?:   () => void
@@ -37,7 +38,7 @@ const C = {
   bg:     '#FAF6F0',
 }
 
-export default function RelationsGraph({ people, relations, userName, onPersonClick, onUserClick }: Props) {
+export default function RelationsGraph({ people, relations, selfId, userName, onPersonClick, onUserClick }: Props) {
   const svgRef = useRef<SVGSVGElement>(null)
   const simRef = useRef<d3.Simulation<Node, Link> | null>(null)
 
@@ -64,11 +65,17 @@ export default function RelationsGraph({ people, relations, userName, onPersonCl
       })),
     ]
 
+    // Liens utilisateur → personne : dérivés des arêtes people_relations
+    // structurées touchant le nœud "moi" (migration 021), plus fiable que
+    // l'ancien texte libre people.relation (qui suit la langue de conversation).
     const links: Link[] = [
-      // Liens utilisateur → chaque personne
-      ...people.map(p => ({ source: '__user__', target: p.id, label: p.relation ?? '' })),
+      ...relations
+        .filter(r => r.person_a_id === selfId)
+        .map(r => ({ source: '__user__', target: r.person_b_id, label: RELATION_TYPE_LABEL[r.relation_type as PeopleRelationType] ?? r.relation_type })),
       // Liens inter-personnes déclarés
-      ...relations.map(r => ({ source: r.person_a_id, target: r.person_b_id, label: RELATION_TYPE_LABEL[r.relation_type as PeopleRelationType] ?? r.relation_type })),
+      ...relations
+        .filter(r => r.person_a_id !== selfId && r.person_b_id !== selfId)
+        .map(r => ({ source: r.person_a_id, target: r.person_b_id, label: RELATION_TYPE_LABEL[r.relation_type as PeopleRelationType] ?? r.relation_type })),
     ]
 
     const linkG = sel.append('g')
@@ -141,7 +148,7 @@ export default function RelationsGraph({ people, relations, userName, onPersonCl
       .attr('fill', '#fff').attr('font-family', 'inherit')
       .text(d => d.name[0]?.toUpperCase() ?? '?')
 
-  }, [people, relations, userName]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [people, relations, selfId, userName]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Mettre à jour le centre si le SVG est redimensionné
   useEffect(() => {

@@ -16,6 +16,7 @@ type Props = {
   alineas:      AlineaListItem[]
   themes:       Theme[]
   userName:     string
+  selfId:       string | null
   visiblePersonIds: Set<string> | null
   visiblePlaceIds:  Set<string> | null
   visibleAlineaIds: Set<string> | null
@@ -29,7 +30,7 @@ type Props = {
 }
 
 export default function FichesColumn({
-  people, relations, places, alineas, themes, userName,
+  people, relations, places, alineas, themes, userName, selfId,
   visiblePersonIds, visiblePlaceIds, visibleAlineaIds, highlightAlineaId,
   fullscreenPanel, onSetFullscreen, onOpen, onFocus, onAddLink, onAddFamily,
 }: Props) {
@@ -49,7 +50,7 @@ export default function FichesColumn({
   return (
     <div className="flex flex-col gap-3 h-full min-h-0 p-3">
       <PersonnesCard
-        people={people} relations={relations} userName={userName} visibleIds={visiblePersonIds}
+        people={people} relations={relations} userName={userName} selfId={selfId} visibleIds={visiblePersonIds}
         collapsed={collapsed.has('personnes')} onToggleCollapse={() => toggleCollapse('personnes')}
         fullscreen={fullscreenPanel === 'personnes'} onToggleFullscreen={() => toggleFullscreen('personnes')}
         onOpen={onOpen} onFocus={onFocus} onAddLink={onAddLink} onAddFamily={onAddFamily}

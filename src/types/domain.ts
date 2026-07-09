@@ -3,11 +3,26 @@ export type EventStatus   = 'undocumented' | 'draft' | 'validated'
 export type RelationType  = 'famille' | 'amitié' | 'professionnel' | 'romantique' | 'autre'
 export type FirstMention  = 'onboarding' | 'frise' | 'alinea' | 'manual' | 'dialogue'
 
+// migration 021 — types étendus au-delà du cercle proche pour couvrir ce que
+// l'ancien regex FamilyTree détectait (grands-parents, oncles/tantes, cousins,
+// beaux-parents, parrains/marraines), en liens DIRECTS déclarés tels quels —
+// pas de calcul transitif requis (ex. "ma grand-mère Renée" sans passer par sa mère).
 export type PeopleRelationType =
   | 'parent_of'
   | 'child_of'
   | 'sibling_of'
   | 'partner_of'
+  | 'grandparent_of'
+  | 'grandchild_of'
+  | 'great_grandparent_of'
+  | 'great_grandchild_of'
+  | 'aunt_uncle_of'
+  | 'niece_nephew_of'
+  | 'cousin_of'
+  | 'parent_in_law_of'
+  | 'child_in_law_of'
+  | 'godparent_of'
+  | 'godchild_of'
   | 'friend_of'
   | 'colleague_of'
   | 'mentor_of'
@@ -17,9 +32,55 @@ export const RELATION_TYPE_LABEL: Record<PeopleRelationType, string> = {
   child_of:    'enfant de',
   sibling_of:  'frère/sœur de',
   partner_of:  'conjoint(e) de',
-  friend_of:   'ami(e) de',
+  grandparent_of:        'grand-parent de',
+  grandchild_of:         'petit(e)-enfant de',
+  great_grandparent_of:  'arrière-grand-parent de',
+  great_grandchild_of:   'arrière-petit(e)-enfant de',
+  aunt_uncle_of:         'oncle/tante de',
+  niece_nephew_of:       'neveu/nièce de',
+  cousin_of:             'cousin(e) de',
+  parent_in_law_of:      'beau-parent de',
+  child_in_law_of:       'beau-fils/belle-fille de',
+  godparent_of:          'parrain/marraine de',
+  godchild_of:           'filleul(e) de',
+  friend_of: 'ami(e) de',
   colleague_of: 'collègue de',
   mentor_of:   'mentor de',
+}
+
+// Types "famille" pertinents pour l'arbre généalogique (exclut le social pur).
+export const FAMILY_RELATION_TYPES: readonly PeopleRelationType[] = [
+  'parent_of', 'child_of', 'sibling_of', 'partner_of',
+  'grandparent_of', 'grandchild_of', 'great_grandparent_of', 'great_grandchild_of',
+  'aunt_uncle_of', 'niece_nephew_of', 'cousin_of',
+  'parent_in_law_of', 'child_in_law_of', 'godparent_of', 'godchild_of',
+]
+
+// Décalage de génération de PERSON_B vu depuis PERSON_A, quand relation_type
+// décrit "A est relation_type de B" (convention people_relations). Utilisé
+// par FamilyTree pour positionner l'arbre depuis le nœud "moi" (is_self),
+// sans dépendre du texte libre de people.relation.
+export const FAMILY_GENERATION_DELTA: Partial<Record<PeopleRelationType, number>> = {
+  child_of: -1, parent_of: 1,
+  grandchild_of: -2, grandparent_of: 2,
+  great_grandchild_of: -3, great_grandparent_of: 3,
+  sibling_of: 0, partner_of: 0, cousin_of: 0,
+  aunt_uncle_of: 1, niece_nephew_of: -1,
+  parent_in_law_of: 1, child_in_law_of: -1,
+  godparent_of: 1, godchild_of: -1,
+}
+
+// Rôle de PERSON_B affiché sous son nœud dans l'arbre, déduit de "moi suis
+// relation_type de B" — évite de retomber sur du texte libre (people.relation)
+// qui suivrait, lui, la langue de conversation courante.
+export const FAMILY_NODE_LABEL: Partial<Record<PeopleRelationType, string>> = {
+  child_of: 'parent', parent_of: 'enfant',
+  grandchild_of: 'grand-parent', grandparent_of: 'petit-enfant',
+  great_grandchild_of: 'arrière-grand-parent', great_grandparent_of: 'arrière-petit-enfant',
+  sibling_of: 'frère/sœur', partner_of: 'conjoint(e)', cousin_of: 'cousin(e)',
+  aunt_uncle_of: 'neveu/nièce', niece_nephew_of: 'oncle/tante',
+  parent_in_law_of: 'beau-fils/belle-fille', child_in_law_of: 'beau-parent',
+  godparent_of: 'filleul(e)', godchild_of: 'parrain/marraine',
 }
 
 export type Theme = {
@@ -87,6 +148,7 @@ export type Person = {
   nickname: string | null
   relation: string | null
   relation_type: RelationType | null
+  is_self: boolean  // migration 021 — nœud "moi", exclu des listes/recherches UI
   birth_year: number | null
   birth_month: number | null    // migration 016
   birth_day: number | null      // migration 016
