@@ -5,10 +5,18 @@ import { createClient } from '@/lib/supabase/client'
 import type { Person, PersonRelation, Theme, LifePhase, LifeEvent } from '@/types/domain'
 import { RELATION_TYPE_LABEL } from '@/types/domain'
 import type { PeopleRelationType } from '@/types/domain'
+import PivotIcon from './PivotIcon'
+import DeceasedIcon from './DeceasedIcon'
 
 export type EntityRef = { type: 'person' | 'place' | 'life_event' | 'alinea'; id: string; label: string }
 
-type LinkedItem = { ref: EntityRef; sub?: string }
+type LinkedItem = { ref: EntityRef; sub?: string; pivot?: boolean }
+
+function formatLinkedEventYear(year: number | null, yearEnd: number | null): string {
+  if (year == null) return 'à dater'
+  if (yearEnd != null && yearEnd !== year) return `${year}–${yearEnd}`
+  return String(year)
+}
 
 type PlaceData   = { id: string; name: string; region: string | null; country: string | null; ai_summary: string | null }
 type AlineaData  = {
@@ -45,6 +53,10 @@ export default function DetailPanel({
   const [editBirthYear, setEditBirthYear]   = useState('')
   const [editBirthMonth, setEditBirthMonth] = useState('')
   const [editBirthDay, setEditBirthDay]     = useState('')
+  const [editIsDeceased, setEditIsDeceased] = useState(false)
+  const [editDeathYear, setEditDeathYear]   = useState('')
+  const [editDeathMonth, setEditDeathMonth] = useState('')
+  const [editDeathDay, setEditDeathDay]     = useState('')
   const [editEmail, setEditEmail]           = useState('')
   const [editPhone, setEditPhone]           = useState('')
   const [editPlaceName, setEditPlaceName]       = useState('')
@@ -58,6 +70,7 @@ export default function DetailPanel({
   const [editEventYearEnd, setEditEventYearEnd]   = useState('')
   const [editEventMonthEnd, setEditEventMonthEnd] = useState('')
   const [editEventDayEnd, setEditEventDayEnd]     = useState('')
+  const [editEventIsPivot, setEditEventIsPivot]   = useState(false)
   const [editPersonAiSummary, setEditPersonAiSummary] = useState('')
   const [editPlaceAiSummary,  setEditPlaceAiSummary]  = useState('')
   const [editEventAiSummary,  setEditEventAiSummary]  = useState('')
@@ -71,19 +84,45 @@ export default function DetailPanel({
 
   const person = entity.type === 'person' ? people.find(p => p.id === entity.id) ?? null : null
 
+  function resetPersonFields(p: Person) {
+    setEditName(p.name)
+    setEditRelation(p.relation ?? '')
+    setEditBirthYear(p.birth_year?.toString() ?? '')
+    setEditBirthMonth(p.birth_month?.toString() ?? '')
+    setEditBirthDay(p.birth_day?.toString() ?? '')
+    setEditIsDeceased(p.is_deceased)
+    setEditDeathYear(p.death_year?.toString() ?? '')
+    setEditDeathMonth(p.death_month?.toString() ?? '')
+    setEditDeathDay(p.death_day?.toString() ?? '')
+    setEditEmail(p.email ?? '')
+    setEditPhone(p.phone ?? '')
+    setEditPersonAiSummary(p.ai_summary ?? '')
+  }
+
+  function resetPlaceFields(p: PlaceData) {
+    setEditPlaceName(p.name)
+    setEditPlaceRegion(p.region ?? '')
+    setEditPlaceCountry(p.country ?? '')
+    setEditPlaceAiSummary(p.ai_summary ?? '')
+  }
+
+  function resetEventFields(e: LifeEvent) {
+    setEditEventTitle(e.title)
+    setEditEventYear(e.year?.toString() ?? '')
+    setEditEventMonth(e.event_month?.toString() ?? '')
+    setEditEventDay(e.event_day?.toString() ?? '')
+    setEditEventIsRange(e.year_end != null)
+    setEditEventYearEnd(e.year_end?.toString() ?? '')
+    setEditEventMonthEnd(e.event_month_end?.toString() ?? '')
+    setEditEventDayEnd(e.event_day_end?.toString() ?? '')
+    setEditEventAiSummary(e.ai_summary ?? '')
+    setEditEventIsPivot(e.is_pivot)
+  }
+
   useEffect(() => {
     setMode('view'); setError(null); setPendingAiConfirm(false)
     if (entity.type === 'person') {
-      if (person) {
-        setEditName(person.name)
-        setEditRelation(person.relation ?? '')
-        setEditBirthYear(person.birth_year?.toString() ?? '')
-        setEditBirthMonth(person.birth_month?.toString() ?? '')
-        setEditBirthDay(person.birth_day?.toString() ?? '')
-        setEditEmail(person.email ?? '')
-        setEditPhone(person.phone ?? '')
-        setEditPersonAiSummary(person.ai_summary ?? '')
-      }
+      if (person) resetPersonFields(person)
       setLoading(false)
       return
     }
@@ -98,24 +137,23 @@ export default function DetailPanel({
         if (cancelled) return
         const placeData = (data as PlaceData) ?? null
         setPlace(placeData)
-        if (placeData) {
-          setEditPlaceName(placeData.name)
-          setEditPlaceRegion(placeData.region ?? '')
-          setEditPlaceCountry(placeData.country ?? '')
-          setEditPlaceAiSummary(placeData.ai_summary ?? '')
-        }
+        if (placeData) resetPlaceFields(placeData)
         const [{ data: al }, { data: ev }] = await Promise.all([
           supabase.from('alinea_places').select('alinea_id, alineas(id, title)').eq('place_id', entity.id),
-          supabase.from('life_event_places').select('life_event_id, life_events(id, title)').eq('place_id', entity.id),
+          supabase.from('life_event_places').select('life_event_id, life_events(id, title, year, year_end, is_pivot)').eq('place_id', entity.id),
         ])
         if (cancelled) return
         const items: LinkedItem[] = [
           ...((al ?? []) as unknown as { alineas: { id: string; title: string | null } | null }[])
             .filter(r => r.alineas)
             .map(r => ({ ref: { type: 'alinea' as const, id: r.alineas!.id, label: r.alineas!.title ?? 'Sans titre' } })),
-          ...((ev ?? []) as unknown as { life_events: { id: string; title: string } | null }[])
+          ...((ev ?? []) as unknown as { life_events: { id: string; title: string; year: number | null; year_end: number | null; is_pivot: boolean } | null }[])
             .filter(r => r.life_events)
-            .map(r => ({ ref: { type: 'life_event' as const, id: r.life_events!.id, label: r.life_events!.title } })),
+            .map(r => ({
+              ref: { type: 'life_event' as const, id: r.life_events!.id, label: r.life_events!.title },
+              sub: formatLinkedEventYear(r.life_events!.year, r.life_events!.year_end),
+              pivot: r.life_events!.is_pivot,
+            })),
         ]
         setLinked(items)
       }
@@ -126,17 +164,7 @@ export default function DetailPanel({
         // On le prend depuis la liste déjà enrichie plutôt que de le re-fetcher.
         const eventData = events.find(e => e.id === entity.id) ?? null
         setEvent(eventData)
-        if (eventData) {
-          setEditEventTitle(eventData.title)
-          setEditEventYear(eventData.year?.toString() ?? '')
-          setEditEventMonth(eventData.event_month?.toString() ?? '')
-          setEditEventDay(eventData.event_day?.toString() ?? '')
-          setEditEventIsRange(eventData.year_end != null)
-          setEditEventYearEnd(eventData.year_end?.toString() ?? '')
-          setEditEventMonthEnd(eventData.event_month_end?.toString() ?? '')
-          setEditEventDayEnd(eventData.event_day_end?.toString() ?? '')
-          setEditEventAiSummary(eventData.ai_summary ?? '')
-        }
+        if (eventData) resetEventFields(eventData)
         const { data: al } = await supabase
           .from('alineas').select('id, title, sort_order').eq('life_event_id', entity.id).order('sort_order')
         if (cancelled) return
@@ -149,8 +177,8 @@ export default function DetailPanel({
         setAlinea(data as AlineaData | null)
         const items: LinkedItem[] = []
         if (data?.life_event_id) {
-          const { data: ev } = await supabase.from('life_events').select('id, title').eq('id', data.life_event_id).single()
-          if (ev) items.push({ ref: { type: 'life_event', id: ev.id, label: ev.title } })
+          const { data: ev } = await supabase.from('life_events').select('id, title, year, year_end, is_pivot').eq('id', data.life_event_id).single()
+          if (ev) items.push({ ref: { type: 'life_event', id: ev.id, label: ev.title }, sub: formatLinkedEventYear(ev.year, ev.year_end), pivot: ev.is_pivot })
         }
         const { data: ppl } = await supabase.from('alinea_people').select('people(id, name)').eq('alinea_id', entity.id)
         for (const r of (ppl ?? []) as unknown as { people: { id: string; name: string } | null }[]) {
@@ -180,6 +208,10 @@ export default function DetailPanel({
         birthYear:  editBirthYear.trim()  ? Number(editBirthYear)  : null,
         birthMonth: editBirthMonth.trim() ? Number(editBirthMonth) : null,
         birthDay:   editBirthDay.trim()   ? Number(editBirthDay)   : null,
+        isDeceased: editIsDeceased,
+        deathYear:  editIsDeceased && editDeathYear.trim()  ? Number(editDeathYear)  : null,
+        deathMonth: editIsDeceased && editDeathMonth.trim() ? Number(editDeathMonth) : null,
+        deathDay:   editIsDeceased && editDeathDay.trim()   ? Number(editDeathDay)   : null,
         email: editEmail.trim() || null,
         phone: editPhone.trim() || null,
         aiSummary: editPersonAiSummary || null,
@@ -224,6 +256,7 @@ export default function DetailPanel({
         monthEnd: editEventIsRange && editEventMonthEnd.trim() ? Number(editEventMonthEnd) : null,
         dayEnd:   editEventIsRange && editEventDayEnd.trim()   ? Number(editEventDayEnd)   : null,
         aiSummary: editEventAiSummary || null,
+        isPivot: editEventIsPivot,
       }),
     })
     setSaving(false); setPendingAiConfirm(false)
@@ -295,7 +328,13 @@ export default function DetailPanel({
                         {[person.birth_day, person.birth_month, person.birth_year].filter(Boolean).join('/')}
                       </p>
                     )}
-                    {person.is_deceased && <p className="text-[#8C8278] italic">Décédé·e{person.death_year ? ` · ${person.death_year}` : ''}</p>}
+                    {person.is_deceased && (
+                      <p className="text-[#8C8278] italic flex items-center gap-1.5">
+                        <DeceasedIcon />
+                        Décédé·e
+                        {person.death_year ? ` · ${[person.death_day, person.death_month, person.death_year].filter(Boolean).join('/')}` : ''}
+                      </p>
+                    )}
                     {person.email && <p><span className="text-[#8C8278]">Email </span>{person.email}</p>}
                     {person.phone && <p><span className="text-[#8C8278]">Tél. </span>{person.phone}</p>}
                   </section>
@@ -319,6 +358,7 @@ export default function DetailPanel({
                         </>
                       )}
                       {' · '}{{ undocumented: 'non documenté', draft: 'brouillon', validated: 'validé' }[event.status]}
+                      {event.is_pivot && <PivotIcon className="ml-1.5" />}
                     </p>
                     {event.life_phase_id && (
                       <p className="text-[#8C8278]">{phases.find(p => p.id === event.life_phase_id)?.name}</p>
@@ -406,7 +446,12 @@ export default function DetailPanel({
                           onClick={() => onNavigate(item.ref)}
                           className="text-left text-[13px] text-[#2C2825] hover:text-[#9B5E3A] transition-colors"
                         >
-                          {item.ref.label} <span className="text-[11px] text-[#8C8278]">({{ person: 'personne', place: 'lieu', life_event: 'événement', alinea: 'alinéa' }[item.ref.type]})</span>
+                          {item.ref.label}{' '}
+                          <span className="text-[11px] text-[#8C8278]">
+                            ({{ person: 'personne', place: 'lieu', life_event: 'événement', alinea: 'alinéa' }[item.ref.type]}
+                            {item.sub ? ` · ${item.sub}` : ''})
+                          </span>
+                          {item.pivot && <PivotIcon className="ml-1" />}
                         </button>
                       ))}
                     </div>
@@ -431,6 +476,23 @@ export default function DetailPanel({
                                className="w-24 px-3 py-2 border border-[#E6DAC8] rounded-xl text-[14px] outline-none focus:border-[#9B5E3A]" />
                       </div>
                     </div>
+                    <label className="flex items-center gap-2 text-[13px] text-[#2C2825] cursor-pointer">
+                      <input type="checkbox" checked={editIsDeceased} onChange={e => setEditIsDeceased(e.target.checked)} className="accent-[#9B5E3A]" />
+                      Décédé·e
+                    </label>
+                    {editIsDeceased && (
+                      <div>
+                        <label className="text-[11px] text-[#8C8278] block mb-1">Décès</label>
+                        <div className="flex gap-2">
+                          <input value={editDeathDay} onChange={e => setEditDeathDay(e.target.value)} placeholder="JJ" inputMode="numeric"
+                                 className="w-16 px-3 py-2 border border-[#E6DAC8] rounded-xl text-[14px] outline-none focus:border-[#9B5E3A]" />
+                          <input value={editDeathMonth} onChange={e => setEditDeathMonth(e.target.value)} placeholder="MM" inputMode="numeric"
+                                 className="w-16 px-3 py-2 border border-[#E6DAC8] rounded-xl text-[14px] outline-none focus:border-[#9B5E3A]" />
+                          <input value={editDeathYear} onChange={e => setEditDeathYear(e.target.value)} placeholder="AAAA" inputMode="numeric"
+                                 className="w-24 px-3 py-2 border border-[#E6DAC8] rounded-xl text-[14px] outline-none focus:border-[#9B5E3A]" />
+                        </div>
+                      </div>
+                    )}
                     <input value={editEmail} onChange={e => setEditEmail(e.target.value)} placeholder="Email" type="email"
                            className="px-3 py-2 border border-[#E6DAC8] rounded-xl text-[14px] outline-none focus:border-[#9B5E3A]" />
                     <input value={editPhone} onChange={e => setEditPhone(e.target.value)} placeholder="Téléphone" type="tel"
@@ -450,7 +512,7 @@ export default function DetailPanel({
                       <button onClick={handleSaveEdit} disabled={saving || !editName.trim()} className="flex-1 px-4 py-2 bg-[#9B5E3A] text-white rounded-xl text-[13px] font-medium disabled:opacity-40">
                         {saving ? 'Sauvegarde…' : pendingAiConfirm ? 'Confirmer la modification' : 'Sauvegarder'}
                       </button>
-                      <button onClick={() => { setMode('view'); setPendingAiConfirm(false) }} className="px-4 py-2 border border-[#E6DAC8] rounded-xl text-[13px]">Annuler</button>
+                      <button onClick={() => { setMode('view'); setPendingAiConfirm(false); if (person) resetPersonFields(person) }} className="px-4 py-2 border border-[#E6DAC8] rounded-xl text-[13px]">Annuler</button>
                     </div>
                   </div>
                 )}
@@ -479,7 +541,7 @@ export default function DetailPanel({
                       <button onClick={handleSavePlaceEdit} disabled={saving || !editPlaceName.trim()} className="flex-1 px-4 py-2 bg-[#9B5E3A] text-white rounded-xl text-[13px] font-medium disabled:opacity-40">
                         {saving ? 'Sauvegarde…' : pendingAiConfirm ? 'Confirmer la modification' : 'Sauvegarder'}
                       </button>
-                      <button onClick={() => { setMode('view'); setPendingAiConfirm(false) }} className="px-4 py-2 border border-[#E6DAC8] rounded-xl text-[13px]">Annuler</button>
+                      <button onClick={() => { setMode('view'); setPendingAiConfirm(false); if (place) resetPlaceFields(place) }} className="px-4 py-2 border border-[#E6DAC8] rounded-xl text-[13px]">Annuler</button>
                     </div>
                   </div>
                 )}
@@ -518,6 +580,10 @@ export default function DetailPanel({
                         </div>
                       </div>
                     )}
+                    <label className="flex items-center gap-2 text-[13px] text-[#2C2825] cursor-pointer">
+                      <input type="checkbox" checked={editEventIsPivot} onChange={e => setEditEventIsPivot(e.target.checked)} className="accent-[#9B5E3A]" />
+                      Moment tournant
+                    </label>
                     <div>
                       <label className="text-[11px] text-[#8C8278] block mb-1">Mémoire IA</label>
                       <AutoTextarea value={editEventAiSummary} onChange={v => { setEditEventAiSummary(v); setPendingAiConfirm(false) }}
@@ -533,7 +599,7 @@ export default function DetailPanel({
                       <button onClick={handleSaveEventEdit} disabled={saving || !editEventTitle.trim()} className="flex-1 px-4 py-2 bg-[#9B5E3A] text-white rounded-xl text-[13px] font-medium disabled:opacity-40">
                         {saving ? 'Sauvegarde…' : pendingAiConfirm ? 'Confirmer la modification' : 'Sauvegarder'}
                       </button>
-                      <button onClick={() => { setMode('view'); setPendingAiConfirm(false) }} className="px-4 py-2 border border-[#E6DAC8] rounded-xl text-[13px]">Annuler</button>
+                      <button onClick={() => { setMode('view'); setPendingAiConfirm(false); if (event) resetEventFields(event) }} className="px-4 py-2 border border-[#E6DAC8] rounded-xl text-[13px]">Annuler</button>
                     </div>
                   </div>
                 )}

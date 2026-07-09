@@ -3,6 +3,7 @@
 import { useMemo } from 'react'
 import type { LifeEvent, LifePhase, Theme } from '@/types/domain'
 import { phaseColor, withAlpha } from '@/types/domain'
+import PivotIcon from './PivotIcon'
 
 type Props = {
   phases:            LifePhase[]
@@ -229,6 +230,7 @@ function EventRow({
               style={{ width: 5, height: 5, background: secondary, right: -1, bottom: -1, boxShadow: '0 0 0 1.5px #FAF8F4' }}
             />
           )}
+          {event.is_pivot && <PivotIcon className="absolute -top-1.5 -left-1 text-[9px] leading-none" />}
         </span>
         <span className="text-[13px] text-[#2C2825] truncate flex-1">{event.title}</span>
         <span className={['text-[10px] flex-shrink-0', (inferred || event.year == null) ? 'text-[#C4BDB6] italic' : 'text-[#8C8278]'].join(' ')}>

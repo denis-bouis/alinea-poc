@@ -8,17 +8,23 @@ import { createClient } from '@/lib/supabase/client'
 export default function LoginPage() {
   const [email, setEmail] = useState('')
   const [sent, setSent] = useState(false)
+  const [notAllowed, setNotAllowed] = useState(false)
   const [loading, setLoading] = useState(false)
   const supabase = createClient()
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault()
     setLoading(true)
-    await supabase.auth.signInWithOtp({
+    setNotAllowed(false)
+    // Accès bêta limité : shouldCreateUser: false empêche la création d'un
+    // compte pour une adresse non invitée — seule la table auth.users
+    // (peuplée via Supabase Dashboard > Invite user) fait foi.
+    const { error } = await supabase.auth.signInWithOtp({
       email,
-      options: { emailRedirectTo: `${location.origin}/callback` },
+      options: { emailRedirectTo: `${location.origin}/callback`, shouldCreateUser: false },
     })
-    setSent(true)
+    if (error) setNotAllowed(true)
+    else setSent(true)
     setLoading(false)
   }
 
@@ -57,6 +63,11 @@ export default function LoginPage() {
                   className="w-full bg-cream border border-border rounded-xl px-4 py-3 text-ink placeholder:text-muted/50 focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent transition-colors text-sm"
                 />
               </div>
+              {notAllowed && (
+                <p className="text-sm text-center" style={{ color: '#B0504A' }}>
+                  Alinéa n&apos;est pour l&apos;instant accessible que sur invitation.
+                </p>
+              )}
               <button
                 type="submit"
                 disabled={loading}

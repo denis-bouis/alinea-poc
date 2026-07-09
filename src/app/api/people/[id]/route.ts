@@ -30,10 +30,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const body = await req.json() as {
     name?: string; relation?: string; relationType?: string
     birthYear?: number | null; birthMonth?: number | null; birthDay?: number | null
+    isDeceased?: boolean; deathYear?: number | null; deathMonth?: number | null; deathDay?: number | null
     email?: string | null; phone?: string | null; aiSummary?: string | null
   }
 
-  // Champs texte non vides = renseignés ; champs optionnels (birth*/email/phone/aiSummary)
+  // Champs texte non vides = renseignés ; champs optionnels (birth*/death*/email/phone/aiSummary)
   // acceptent explicitement null pour effacer une valeur déjà saisie.
   const { error } = await supabase
     .from('people')
@@ -44,6 +45,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       ...(body.birthYear  !== undefined ? { birth_year:  body.birthYear  } : {}),
       ...(body.birthMonth !== undefined ? { birth_month: body.birthMonth } : {}),
       ...(body.birthDay   !== undefined ? { birth_day:   body.birthDay   } : {}),
+      ...(body.isDeceased !== undefined ? { is_deceased: body.isDeceased } : {}),
+      ...(body.deathYear  !== undefined ? { death_year:  body.deathYear  } : {}),
+      ...(body.deathMonth !== undefined ? { death_month: body.deathMonth } : {}),
+      ...(body.deathDay   !== undefined ? { death_day:   body.deathDay   } : {}),
       ...(body.email !== undefined ? { email: body.email?.trim() || null } : {}),
       ...(body.phone !== undefined ? { phone: body.phone?.trim() || null } : {}),
       ...(body.aiSummary !== undefined ? { ai_summary: body.aiSummary?.trim() || null } : {}),

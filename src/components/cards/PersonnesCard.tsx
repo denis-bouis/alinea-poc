@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic'
 import CardShell from './CardShell'
 import type { Person, PersonRelation } from '@/types/domain'
 import type { EntityRef } from '@/components/DetailPanel'
+import DeceasedIcon from '@/components/DeceasedIcon'
 
 const FamilyTree = dynamic(() => import('@/components/FamilyTree'), { ssr: false })
 
@@ -65,6 +66,7 @@ export default function PersonnesCard({
                 className="flex-1 min-w-0 flex items-center justify-between gap-2 px-4 py-2 text-left hover:bg-[#FAF6F0] transition-colors"
               >
                 <span className="text-[13px] text-[#2C2825] truncate flex-1 min-w-0">{p.name}</span>
+                {p.is_deceased && <DeceasedIcon className="flex-shrink-0" />}
                 {p.relation && <span className="text-[11px] text-[#8C8278] flex-shrink-0 max-w-[40%] truncate">{p.relation}</span>}
               </button>
               <button
